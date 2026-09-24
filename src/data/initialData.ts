@@ -11,7 +11,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   referralBonusPoints: 200,
   maxAdsPerHour: 8,
   adNetworkProvider: 'monetag',
-  monetagZoneId: '47bc53329899ec886c8fd1509ee3cbd0',
+  monetagZoneId: 'a4e055c2c97843f0ed63fb4bbdb75683',
   admobPublisherId: 'ca-pub-monetization-partner',
   admobSlotId: 'rewarded_slot_web'
 };
