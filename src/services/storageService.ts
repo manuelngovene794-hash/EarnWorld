@@ -65,6 +65,56 @@ export const storageService = {
     }
   },
 
+  async getEmailDocId(email: string): Promise<string> {
+    const clean = email.trim().toLowerCase();
+    const encoder = new TextEncoder();
+    const data = encoder.encode(clean);
+    const hashBuf = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).slice(0, 32).join('');
+  },
+
+  async getUserCredentials(email: string): Promise<{ userId: string; email: string; salt: string; passwordHash: string } | null> {
+    try {
+      const docId = await this.getEmailDocId(email);
+      const snap = await getDoc(doc(db, 'user_credentials', docId));
+      if (snap.exists()) {
+        return snap.data() as any;
+      }
+      return null;
+    } catch (e) {
+      console.warn('Error fetching credentials:', e);
+      return null;
+    }
+  },
+
+  async saveUserCredentials(email: string, userId: string, salt: string, passwordHash: string): Promise<void> {
+    try {
+      const docId = await this.getEmailDocId(email);
+      await setDoc(doc(db, 'user_credentials', docId), {
+        userId,
+        email: email.trim().toLowerCase(),
+        salt,
+        passwordHash,
+        createdAt: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('Error saving credentials:', e);
+    }
+  },
+
+  async findUserByEmail(email: string): Promise<UserProfile | null> {
+    try {
+      const q = query(collection(db, 'users'), where('email', '==', email.trim().toLowerCase()));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return snap.docs[0].data() as UserProfile;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  },
+
   // User Profile
   async getUserProfile(userId: string): Promise<UserProfile | null> {
     try {

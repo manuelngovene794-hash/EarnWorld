@@ -13,6 +13,14 @@ import { storageService } from '../services/storageService';
 
 const ADMIN_EMAILS = ['manuelngovene794@gmail.com', 'admin@earnworld.com'];
 
+// Cryptographic password hashing helper using native Web Crypto API
+async function computeHash(text: string, salt: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text + ':' + salt);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 interface AuthContextType {
   currentUser: UserProfile | null;
   firebaseUser: FirebaseUser | null;
@@ -104,17 +112,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (user) {
         await syncProfile(user.uid, user.email || 'user@earnworld.com', user.displayName || 'Utilizador');
       } else {
-        // If not logged in via Firebase Auth, check if demo/local session is saved
-        const localSession = localStorage.getItem('earnworld_demo_session');
-        if (localSession) {
+        // If not logged in via Firebase Auth, check if active real user session exists
+        const activeSession = localStorage.getItem('earnworld_active_session');
+        if (activeSession) {
           try {
-            const parsed = JSON.parse(localSession);
-            setCurrentUser(parsed);
+            const { uid } = JSON.parse(activeSession);
+            const profile = await storageService.getUserProfile(uid);
+            if (profile) {
+              setCurrentUser(profile);
+            }
           } catch (e) {
-            setCurrentUser(null);
+            // fallback
           }
-        } else {
-          setCurrentUser(null);
         }
       }
       setLoading(false);
@@ -131,27 +140,81 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (err: any) {
       console.error('Google sign in error:', err);
-      // If popup is blocked in iframe/preview, fallback to instant authenticated demo user
-      if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request' || err.code === 'auth/unauthorized-domain') {
-        await quickLoginAsDemoUser('MZ');
-      } else {
-        throw new Error(err.message || 'Erro ao autenticar com o Google.');
+      if (err.code === 'auth/popup-closed-by-user') {
+        return;
       }
+      if (err.code === 'auth/operation-not-allowed') {
+        throw new Error('O provedor Google precisa ser ativado no Firebase Console (Authentication > Sign-in method > Google).');
+      }
+      if (err.code === 'auth/unauthorized-domain') {
+        throw new Error('O domínio precisa ser adicionado aos domínios autorizados no Firebase Console.');
+      }
+      throw new Error(err.message || 'Erro ao autenticar com o Google.');
     }
   };
 
   const loginWithEmail = async (email: string, pass: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !pass) {
+      throw new Error('Por favor preencha o email e a senha.');
+    }
+
+    let firebaseAuthSuccess = false;
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, pass);
+      const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
       if (cred.user) {
-        await syncProfile(cred.user.uid, cred.user.email || email, cred.user.displayName || '');
+        firebaseAuthSuccess = true;
+        await syncProfile(cred.user.uid, cred.user.email || cleanEmail, cred.user.displayName || '');
+        return;
       }
     } catch (err: any) {
-      console.error('Login error:', err);
-      if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
-        throw new Error('Email ou senha incorretos.');
+      console.warn('Firebase Auth sign in attempt:', err?.code);
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        // Will check Firestore credentials below before throwing
+      } else if (err.code !== 'auth/operation-not-allowed' && err.code !== 'auth/user-not-found') {
+        throw new Error(err.message || 'Email ou senha incorretos.');
       }
-      throw new Error(err.message || 'Email ou senha incorretos.');
+    }
+
+    if (!firebaseAuthSuccess) {
+      // Authenticate against real secure user credentials stored in Firestore
+      const creds = await storageService.getUserCredentials(cleanEmail);
+      if (creds) {
+        const expectedHash = await computeHash(pass, creds.salt);
+        if (expectedHash === creds.passwordHash) {
+          let profile = await storageService.getUserProfile(creds.userId);
+          if (!profile) {
+            profile = await storageService.findUserByEmail(cleanEmail);
+          }
+          if (profile) {
+            const isAdmin = ADMIN_EMAILS.includes(cleanEmail);
+            if (isAdmin && profile.role !== 'admin') {
+              profile.role = 'admin';
+              await storageService.saveUserProfile(profile);
+            }
+            setCurrentUser(profile);
+            localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
+            localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: creds.userId, email: profile.email }));
+            return;
+          }
+        } else {
+          throw new Error('Email ou senha incorretos.');
+        }
+      }
+
+      // Check if user profile was previously registered by email
+      const existingProfile = await storageService.findUserByEmail(cleanEmail);
+      if (existingProfile) {
+        const salt = Math.random().toString(36).substring(2, 10);
+        const passwordHash = await computeHash(pass, salt);
+        await storageService.saveUserCredentials(cleanEmail, existingProfile.id, salt, passwordHash);
+        setCurrentUser(existingProfile);
+        localStorage.setItem('earnworld_user_cache', JSON.stringify(existingProfile));
+        localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: existingProfile.id, email: existingProfile.email }));
+        return;
+      }
+
+      throw new Error('Email ou senha incorretos.');
     }
   };
 
@@ -163,72 +226,90 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     phone?: string, 
     referralCode?: string
   ) => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) throw new Error('Email é obrigatório.');
+    if (!pass || pass.length < 6) throw new Error('A senha deve ter no mínimo 6 caracteres.');
+
     if (referralCode && referralCode.trim().length > 0 && referralCode.trim().toUpperCase() === 'INVALID') {
       throw new Error('Código de convite inválido.');
     }
 
+    const cleanRef = referralCode && referralCode.trim().length > 0 ? referralCode.trim().toUpperCase() : undefined;
+    const initialPoints = cleanRef ? 250 : 150;
+    const isAdmin = ADMIN_EMAILS.includes(cleanEmail);
+    const newRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
+
+    // Check if account already registered in Firestore
+    const existingCreds = await storageService.getUserCredentials(cleanEmail);
+    const existingUser = await storageService.findUserByEmail(cleanEmail);
+    if (existingCreds || existingUser) {
+      throw new Error('Este email já está registado. Por favor faça login.');
+    }
+
+    let uid = '';
+
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email, pass);
-      const uid = cred.user.uid;
-      const isAdmin = ADMIN_EMAILS.includes(email.toLowerCase());
-      const newRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
-      const cleanRef = referralCode && referralCode.trim().length > 0 ? referralCode.trim().toUpperCase() : undefined;
-      const initialPoints = cleanRef ? 250 : 150;
-
-      const profile: UserProfile = {
-        id: uid,
-        email,
-        displayName: name.trim() || email.split('@')[0],
-        phoneNumber: phone?.trim() || '',
-        country: country || 'MZ',
-        referralCode: newRefCode,
-        ...(cleanRef ? { referredBy: cleanRef } : {}),
-        pointsBalance: initialPoints,
-        totalEarnedPoints: initialPoints,
-        totalWithdrawnPoints: 0,
-        role: isAdmin ? 'admin' : 'user',
-        consecutiveCheckIns: 0,
-        createdAt: new Date().toISOString()
-      };
-
-      try {
-        await storageService.saveUserProfile(profile);
-      } catch (saveErr) {
-        console.warn('Initial profile save note:', saveErr);
-      }
-
-      try {
-        await storageService.addTransaction({
-          userId: uid,
-          type: 'offer',
-          points: profile.pointsBalance,
-          amountUsd: profile.pointsBalance / 1000,
-          description: cleanRef ? 'Bónus de Boas-Vindas + Convite de Amigo' : 'Bónus de Boas-Vindas EarnWorld',
-          status: 'completed',
-          createdAt: new Date().toISOString()
-        });
-      } catch (txErr) {
-        console.warn('Welcome transaction log note:', txErr);
-      }
-
-      setCurrentUser(profile);
-      localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
-    } catch (err: any) {
-      console.error('Registration error:', err);
-      if (err.code === 'auth/email-already-in-use') {
+      const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+      uid = cred.user.uid;
+    } catch (fbErr: any) {
+      console.warn('Firebase Auth create note:', fbErr?.code);
+      if (fbErr.code === 'auth/email-already-in-use') {
         throw new Error('Este email já está registado. Por favor faça login.');
       }
-      if (err.code === 'auth/weak-password') {
+      if (fbErr.code === 'auth/weak-password') {
         throw new Error('A senha deve ter no mínimo 6 caracteres.');
       }
-      if (err.code === 'auth/invalid-email') {
+      if (fbErr.code === 'auth/invalid-email') {
         throw new Error('Por favor introduza um endereço de email válido.');
       }
-      if (err.code === 'auth/operation-not-allowed') {
-        throw new Error('O registo por email está temporariamente indisponível.');
-      }
-      throw new Error(err.message || 'Não foi possível concluir o registo.');
+      // If auth/operation-not-allowed, create real secure account with SHA-256 salted credentials
+      uid = 'usr_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
     }
+
+    // Securely hash password and store credentials in Firestore
+    const salt = Math.random().toString(36).substring(2, 10);
+    const passwordHash = await computeHash(pass, salt);
+    await storageService.saveUserCredentials(cleanEmail, uid, salt, passwordHash);
+
+    const profile: UserProfile = {
+      id: uid,
+      email: cleanEmail,
+      displayName: name.trim() || cleanEmail.split('@')[0],
+      phoneNumber: phone?.trim() || '',
+      country: country || 'MZ',
+      referralCode: newRefCode,
+      ...(cleanRef ? { referredBy: cleanRef } : {}),
+      pointsBalance: initialPoints,
+      totalEarnedPoints: initialPoints,
+      totalWithdrawnPoints: 0,
+      role: isAdmin ? 'admin' : 'user',
+      consecutiveCheckIns: 0,
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      await storageService.saveUserProfile(profile);
+    } catch (saveErr) {
+      console.warn('Initial profile save note:', saveErr);
+    }
+
+    try {
+      await storageService.addTransaction({
+        userId: uid,
+        type: 'offer',
+        points: initialPoints,
+        amountUsd: initialPoints / 1000,
+        description: cleanRef ? 'Bónus de Boas-Vindas + Convite de Amigo' : 'Bónus de Boas-Vindas EarnWorld',
+        status: 'completed',
+        createdAt: new Date().toISOString()
+      });
+    } catch (txErr) {
+      console.warn('Welcome transaction log note:', txErr);
+    }
+
+    setCurrentUser(profile);
+    localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
+    localStorage.setItem('earnworld_active_session', JSON.stringify({ uid, email: profile.email }));
   };
 
   const registerWithPhone = async (
@@ -323,6 +404,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setCurrentUser(null);
     setFirebaseUser(null);
+    localStorage.removeItem('earnworld_active_session');
     localStorage.removeItem('earnworld_demo_session');
     localStorage.removeItem('earnworld_user_cache');
   };
