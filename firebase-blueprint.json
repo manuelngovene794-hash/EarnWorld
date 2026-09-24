@@ -1,0 +1,127 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "EarnWorld registered user with points rewards balance and verification status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "country": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "referredBy": { "type": "string" },
+        "pointsBalance": { "type": "number" },
+        "totalEarnedPoints": { "type": "number" },
+        "totalWithdrawnPoints": { "type": "number" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "lastCheckInDate": { "type": "string" },
+        "consecutiveCheckIns": { "type": "number" },
+        "isBanned": { "type": "boolean" },
+        "fraudScore": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["email", "pointsBalance", "role", "country"]
+    },
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Global application configuration for exchange rates, liquidity revenue, and rules",
+      "type": "object",
+      "properties": {
+        "usdToMznRate": { "type": "number" },
+        "availableRealRevenueUsd": { "type": "number" },
+        "estimatedAdRevenueUsd": { "type": "number" },
+        "minWithdrawalPoints": { "type": "number" },
+        "pointsPerDollar": { "type": "number" },
+        "dailyCheckInPoints": { "type": "number" },
+        "adRewardPoints": { "type": "number" },
+        "referralBonusPoints": { "type": "number" },
+        "maxAdsPerHour": { "type": "number" }
+      },
+      "required": ["usdToMznRate", "availableRealRevenueUsd", "minWithdrawalPoints", "pointsPerDollar"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Earning task such as surveys, partner offers, app installs, and rewarded actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "titlePt": { "type": "string" },
+        "description": { "type": "string" },
+        "descriptionPt": { "type": "string" },
+        "category": { "type": "string", "enum": ["survey", "offer", "video", "daily", "special"] },
+        "rewardPoints": { "type": "number" },
+        "estimatedMinutes": { "type": "number" },
+        "partner": { "type": "string" },
+        "actionUrl": { "type": "string" },
+        "requiresApproval": { "type": "boolean" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["title", "category", "rewardPoints", "isActive"]
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "Withdrawal request submitted by user backed strictly by verified real revenue",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userName": { "type": "string" },
+        "country": { "type": "string" },
+        "pointsDeducted": { "type": "number" },
+        "amountUsd": { "type": "number" },
+        "amountMzn": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["mpesa", "emola", "paypal", "payoneer", "usdt", "bank"] },
+        "accountDetails": { "type": "string" },
+        "accountName": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "paid", "rejected"] },
+        "statusMessage": { "type": "string" },
+        "txReference": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "pointsDeducted", "amountUsd", "paymentMethod", "accountDetails", "status"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "User point ledger entry for earnings and redemptions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "points": { "type": "number" },
+        "amountUsd": { "type": "number" },
+        "description": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "type", "points", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile with rewards balance and anti-fraud status"
+    },
+    "/app_config/global": {
+      "schema": "AppConfig",
+      "description": "Global revenue balance, currency conversion rate, and payment configurations"
+    },
+    "/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Available tasks and offers"
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": "Withdrawal",
+      "description": "Payout requests with real liquidity checks"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Audit trail ledger of point activity"
+    }
+  }
+}
