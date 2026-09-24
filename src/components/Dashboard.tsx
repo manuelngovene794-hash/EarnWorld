@@ -39,7 +39,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onOpenAuth,
   onSelectTask
 }) => {
-  const { currentUser, updatePoints } = useAuth();
+  const { currentUser, updatePoints, claimCheckIn } = useAuth();
   const { t } = useLanguage();
   const [claimingCheckin, setClaimingCheckin] = useState(false);
 
@@ -64,7 +64,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     setClaimingCheckin(true);
     try {
       const bonus = config.dailyCheckInPoints + Math.min(50, currentStreak * 5);
-      await updatePoints(bonus, `Check-in Diário (Dia ${currentStreak + 1})`, 'checkin');
+      await claimCheckIn(bonus);
       
       confetti({
         particleCount: 80,
@@ -256,9 +256,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </p>
             </div>
             <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-              <span>Taxa do Administrador:</span>
-              <span className="text-emerald-300 font-semibold">{config.usdToMznRate || 64.0} MZN</span>
+              <span>Referência Visual:</span>
+              <span className="text-emerald-300 font-semibold">US$1 = {config.usdToMznRate || 64.0} MZN</span>
             </div>
+            <p className="text-[10px] text-slate-400 mt-1 italic">
+              * A conversão exibida é apenas uma referência e não significa que existe dinheiro imediatamente disponível para pagamento sem a auditoria da plataforma.
+            </p>
           </div>
 
           {/* Card 4: Referrals Bonus */}

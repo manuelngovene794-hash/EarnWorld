@@ -58,6 +58,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   const [minPts, setMinPts] = useState<number>(config.minWithdrawalPoints || 5000);
   const [adPts, setAdPts] = useState<number>(config.adRewardPoints || 25);
   const [refPts, setRefPts] = useState<number>(config.referralBonusPoints || 200);
+  const [adProvider, setAdProvider] = useState<'monetag' | 'admob' | 'direct'>(config.adNetworkProvider || 'monetag');
+  const [monetagZone, setMonetagZone] = useState<string>(config.monetagZoneId || 'monetag_rewarded_inpage');
+  const [admobPub, setAdmobPub] = useState<string>(config.admobPublisherId || 'ca-pub-monetization-partner');
 
   // New task form state
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -113,11 +116,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
         estimatedAdRevenueUsd: Number(estimatedAdRev),
         minWithdrawalPoints: Number(minPts),
         adRewardPoints: Number(adPts),
-        referralBonusPoints: Number(refPts)
+        referralBonusPoints: Number(refPts),
+        adNetworkProvider: adProvider,
+        monetagZoneId: monetagZone,
+        admobPublisherId: admobPub
       };
       await storageService.updateAppConfig(updated);
       onUpdateConfig(updated);
-      showToast('Configurações e taxa de câmbio USD/MZN salvas com sucesso!');
+      showToast('Configurações e rede de monetização salvas com sucesso!');
     } catch (e) {
       console.error(e);
     }
@@ -1040,6 +1046,49 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                 onChange={(e) => setRefPts(Number(e.target.value))}
                 className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-bold text-sm"
               />
+            </div>
+          </div>
+
+          {/* Monetization Ready Setup (AdMob / Monetag) */}
+          <div className="pt-3 border-t border-slate-800 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400">
+              Configuração da Rede de Anúncios (Monetag / Google AdMob)
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs text-slate-400">Provedor Ativo:</label>
+                <select
+                  value={adProvider}
+                  onChange={(e) => setAdProvider(e.target.value as any)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-bold text-xs"
+                >
+                  <option value="monetag">Monetag Rewarded</option>
+                  <option value="admob">Google AdMob / AdSense</option>
+                  <option value="direct">Rede Direta Parceira</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-slate-400">Monetag Zone ID:</label>
+                <input
+                  type="text"
+                  value={monetagZone}
+                  onChange={(e) => setMonetagZone(e.target.value)}
+                  placeholder="Ex: 8746321"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-mono"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-slate-400">AdMob Publisher / Unit ID:</label>
+                <input
+                  type="text"
+                  value={admobPub}
+                  onChange={(e) => setAdmobPub(e.target.value)}
+                  placeholder="ca-pub-XXXXXXXXXXXXXXXX"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-mono"
+                />
+              </div>
             </div>
           </div>
 

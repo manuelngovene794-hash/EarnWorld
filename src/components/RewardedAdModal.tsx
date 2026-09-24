@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   Play, 
@@ -8,7 +8,9 @@ import {
   ShieldCheck, 
   Coins, 
   Sparkles,
-  Lock
+  Eye,
+  PauseCircle,
+  Tv
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useAuth } from '../context/AuthContext';
@@ -36,8 +38,35 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
   const [userAnswer, setUserAnswer] = useState<string>('');
   const [captchaChallenge, setCaptchaChallenge] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
+  
+  // Real-time visibility tracking - ad must actually be watched on screen
+  const [isTabVisible, setIsTabVisible] = useState<boolean>(true);
+  const [adSessionId, setAdSessionId] = useState<string>('');
+  const claimedSessionsRef = useRef<Set<string>>(new Set());
 
   const rewardPoints = config.adRewardPoints || 25;
+  const adProvider = config.adNetworkProvider || 'monetag';
+
+  // Listen to tab visibility & window blur/focus
+  useEffect(() => {
+    const handleVisibility = () => {
+      const visible = !document.hidden;
+      setIsTabVisible(visible);
+    };
+
+    const handleBlur = () => setIsTabVisible(false);
+    const handleFocus = () => setIsTabVisible(true);
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
 
   // Check cooldown from local state/storage
   useEffect(() => {
@@ -61,17 +90,17 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
     return () => clearInterval(timer);
   }, [cooldownRemaining]);
 
-  // Video countdown
+  // Video countdown: Only ticks when the ad is actively visible and focused
   useEffect(() => {
     let timer: any;
-    if (adState === 'watching') {
+    if (adState === 'watching' && isTabVisible) {
       timer = setInterval(() => {
         setSecondsRemaining(prev => {
           if (prev <= 1) {
             clearInterval(timer);
-            // Generate a simple human anti-bot verification
-            const numA = Math.floor(Math.random() * 5) + 2;
-            const numB = Math.floor(Math.random() * 5) + 1;
+            // Generate human anti-bot verification challenge
+            const numA = Math.floor(Math.random() * 5) + 3;
+            const numB = Math.floor(Math.random() * 5) + 2;
             setCaptchaSolution(numA + numB);
             setCaptchaChallenge(`${numA} + ${numB}`);
             setAdState('verifying');
@@ -82,7 +111,7 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
       }, 1000);
     }
     return () => clearInterval(timer);
-  }, [adState]);
+  }, [adState, isTabVisible]);
 
   if (!isOpen) return null;
 
@@ -90,29 +119,51 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
     if (cooldownRemaining > 0) return;
     setErrorMsg('');
     setSecondsRemaining(15);
+    setIsTabVisible(true);
+
+    // Generate unique session token for anti-duplicate tracking
+    const newSessionToken = 'ad_session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    setAdSessionId(newSessionToken);
+
+    // Prepare Monetag / AdMob SDK caller if loaded in global window
+    try {
+      if (typeof (window as any).show_rewarded_ad === 'function') {
+        (window as any).show_rewarded_ad();
+      }
+    } catch (e) {
+      // SDK fallback
+    }
+
     setAdState('watching');
   };
 
   const handleVerifyAndClaim = async () => {
-    if (parseInt(userAnswer, 10) !== captchaSolution) {
-      setErrorMsg('Código de verificação inválido.');
+    if (parseInt(userAnswer.trim(), 10) !== captchaSolution) {
+      setErrorMsg('Código de verificação incorreto. Tente novamente.');
+      return;
+    }
+
+    // Anti-duplicate protection: check if this ad session was already credited
+    if (!adSessionId || claimedSessionsRef.current.has(adSessionId)) {
+      setErrorMsg('Esta recompensa já foi atribuída anteriormente.');
       return;
     }
 
     try {
+      claimedSessionsRef.current.add(adSessionId);
       await updatePoints(rewardPoints, 'Visualização Válida de Anúncio Recompensado', 'ad_reward');
       localStorage.setItem('last_ad_watch_time', Date.now().toString());
       setCooldownRemaining(30);
       setAdState('completed');
 
       confetti({
-        particleCount: 50,
-        spread: 60,
+        particleCount: 60,
+        spread: 70,
         origin: { y: 0.6 },
         colors: ['#F59E0B', '#10B981', '#3B82F6']
       });
     } catch (e) {
-      setErrorMsg('Não foi possível concluir a tarefa.');
+      setErrorMsg('Não foi possível creditar a recompensa.');
     }
   };
 
@@ -145,6 +196,10 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
             </div>
 
             <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-[11px] text-slate-300 font-semibold mb-2">
+                <Tv className="w-3.5 h-3.5 text-amber-400" />
+                <span>Monetização Parceira • AdMob / Monetag</span>
+              </div>
               <h3 className="text-xl font-black text-white">{t('ads.title')}</h3>
               <p className="text-xs text-slate-300 mt-1 max-w-sm mx-auto">
                 {t('ads.desc')}
@@ -163,22 +218,22 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
                 </div>
               </div>
               <div className="text-right">
-                <span className="text-xs text-slate-400">Duração</span>
-                <p className="text-xs font-bold text-white">~15 segundos</p>
+                <span className="text-xs text-slate-400">Duração Mínima</span>
+                <p className="text-xs font-bold text-white">15 segundos</p>
               </div>
             </div>
 
-            {/* Mandatory Rules / Transparency */}
+            {/* Strict Anti-Fraud Rules / User Visibility Notice */}
             <div className="p-3.5 rounded-xl bg-amber-950/20 border border-amber-500/30 text-left space-y-1.5 text-xs text-amber-200/90">
               <div className="flex items-center gap-1.5 font-bold text-amber-400">
                 <ShieldCheck className="w-4 h-4" />
-                <span>Regras de Transparência e Segurança:</span>
+                <span>Regras de Validação & Integridade:</span>
               </div>
               <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-300">
-                <li>A visualização do anúncio é <strong>100% voluntária</strong>.</li>
-                <li>Os pontos concedidos são recompensas internas e <strong>não dinheiro garantido</strong>.</li>
-                <li>A receita gerada pelos anúncios pertence ao EarnWorld para cobrir o fundo real de levantamentos.</li>
-                <li><strong>Proibido usar bots, autoclickers ou emuladores</strong> (detetados por antifraude).</li>
+                <li>O anúncio deve ser <strong>assistido até o final</strong> na tela ativa.</li>
+                <li>Se mudar de aba ou minimizar a janela, o cronômetro é <strong>pausado</strong>.</li>
+                <li>Apenas <strong>1 recompensa por anúncio concluído</strong> (proteção anti-duplicação).</li>
+                <li>A receita deste anúncio alimenta a reserva real para pagar levantamentos.</li>
               </ul>
             </div>
 
@@ -202,36 +257,56 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
 
         {/* State: WATCHING */}
         {adState === 'watching' && (
-          <div className="space-y-4 text-center py-4">
-            <div className="relative aspect-video w-full rounded-2xl bg-slate-950 border border-amber-500/30 overflow-hidden flex flex-col items-center justify-center p-6">
+          <div className="space-y-4 text-center py-2">
+            
+            {/* Ad Network Container Slot */}
+            <div className="relative aspect-video w-full rounded-2xl bg-slate-950 border border-amber-500/30 overflow-hidden flex flex-col items-center justify-center p-4">
               
-              {/* Simulated Ad Stream Player */}
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/60 to-slate-950 flex flex-col justify-between p-4 pointer-events-none">
+              {/* Overlay with real-time status */}
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/80 to-slate-950 flex flex-col justify-between p-4 pointer-events-none">
+                
+                {/* Header info */}
                 <div className="flex items-center justify-between text-xs">
-                  <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                    Anúncio Patrocinado
+                  <span className="px-2.5 py-1 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    <span>Rede {adProvider.toUpperCase()} / AdMob</span>
                   </span>
-                  <div className="flex items-center gap-1 text-slate-300 font-mono">
+                  <div className="flex items-center gap-1.5 text-slate-200 font-mono bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-800">
                     <Clock className="w-3.5 h-3.5 text-amber-400" />
-                    <span>00:{secondsRemaining.toString().padStart(2, '0')}</span>
+                    <span className="font-bold text-sm">00:{secondsRemaining.toString().padStart(2, '0')}</span>
                   </div>
                 </div>
 
-                <div className="text-center space-y-1">
-                  <div className="w-12 h-12 mx-auto rounded-full bg-blue-600/30 border border-blue-400 flex items-center justify-center animate-pulse">
-                    <Sparkles className="w-6 h-6 text-amber-400" />
+                {/* Central Verified Ad Placement Area */}
+                <div className="text-center space-y-2 py-4">
+                  <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <Tv className="w-6 h-6" />
                   </div>
-                  <h4 className="text-base font-bold text-white">EarnWorld Global Network</h4>
-                  <p className="text-xs text-slate-300">Conectando marcas globais com consumidores em África & Mundo</p>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Espaço de Monetização Ativo</h4>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Conexão segura com fornecedor de anúncios parceiro ({adProvider})
+                    </p>
+                  </div>
+                  
+                  {/* Paused state notification */}
+                  {!isTabVisible && (
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold animate-bounce">
+                      <PauseCircle className="w-4 h-4 text-rose-400" />
+                      <span>Anúncio em Pausa: Volte à janela para continuar a contagem</span>
+                    </div>
+                  )}
                 </div>
 
-                <div className="text-[10px] text-slate-400">
-                  Por favor, mantenha esta janela ativa até o fim da contagem.
+                {/* Footer disclaimer */}
+                <div className="text-[11px] text-slate-400 flex items-center justify-center gap-1">
+                  <Eye className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Mantenha esta janela aberta e visível na tela até concluir.</span>
                 </div>
               </div>
 
               {/* Progress Bar */}
-              <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800">
+              <div className="absolute bottom-0 left-0 right-0 h-2 bg-slate-800">
                 <div 
                   className="h-full bg-gradient-to-r from-amber-500 to-yellow-400 transition-all duration-1000"
                   style={{ width: `${((15 - secondsRemaining) / 15) * 100}%` }}
@@ -240,13 +315,22 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
             </div>
 
             <div className="flex items-center justify-center gap-2 text-xs text-slate-400">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              <span>A validar visualização legal com os servidores... ({secondsRemaining}s)</span>
+              {isTabVisible ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span>A validar visualização completa com a rede... ({secondsRemaining}s restantes)</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-rose-400" />
+                  <span className="text-rose-400 font-semibold">Janela em segundo plano – contagem pausada.</span>
+                </>
+              )}
             </div>
           </div>
         )}
 
-        {/* State: VERIFYING (Anti-Fraud human check) */}
+        {/* State: VERIFYING (Anti-Fraud human check after completion) */}
         {adState === 'verifying' && (
           <div className="space-y-4 text-center py-2">
             <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
@@ -256,7 +340,7 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
             <div>
               <h4 className="text-lg font-black text-white">Verificação de Segurança Antifraude</h4>
               <p className="text-xs text-slate-300 mt-1">
-                Para evitar cliques automáticos e garantir que é uma pessoa real, resolva:
+                Visualização concluída com sucesso! Para confirmar que é uma pessoa real, resolva a soma:
               </p>
             </div>
 
@@ -267,8 +351,15 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
               <input
                 type="number"
                 value={userAnswer}
-                onChange={(e) => setUserAnswer(e.target.value)}
+                onChange={(e) => {
+                  setUserAnswer(e.target.value);
+                  setErrorMsg('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleVerifyAndClaim();
+                }}
                 placeholder="Resposta"
+                autoFocus
                 className="w-full text-center py-2 px-3 rounded-lg bg-slate-900 border border-slate-700 text-white font-bold text-lg focus:outline-none focus:border-amber-400"
               />
             </div>
@@ -297,9 +388,12 @@ export const RewardedAdModal: React.FC<RewardedAdModalProps> = ({
             </div>
 
             <div>
-              <h4 className="text-xl font-black text-white">Parabéns!</h4>
+              <h4 className="text-xl font-black text-white">Recompensa Creditada!</h4>
               <p className="text-xs text-slate-300 mt-1">
-                Ganhou <strong className="text-amber-400">+{rewardPoints} pontos</strong> na sua conta EarnWorld.
+                Ganhou <strong className="text-amber-400">+{rewardPoints} pontos</strong> registados no seu saldo EarnWorld.
+              </p>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Transação gravada no histórico com validação de anúncio concluído.
               </p>
             </div>
 

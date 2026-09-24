@@ -32,7 +32,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
   onOpenAuth,
   setActiveTab
 }) => {
-  const { currentUser, updatePoints } = useAuth();
+  const { currentUser, refreshProfile } = useAuth();
   const { t } = useLanguage();
 
   const [selectedMethodId, setSelectedMethodId] = useState<PaymentMethodId>('mpesa');
@@ -47,10 +47,11 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
   const userCountry = currentUser?.country || 'MZ';
   const usdRate = config.usdToMznRate || 64.0;
   const pointsPerDollar = config.pointsPerDollar || 1000;
-  const minPoints = config.minWithdrawalPoints || 5000;
+  const minPoints = 5000; // Strictly 5.000 points = US$5.00
 
   const amountUsd = pointsToWithdraw / pointsPerDollar;
   const amountMzn = amountUsd * usdRate;
+  const hasInsufficientBalance = currentPoints < minPoints || pointsToWithdraw > currentPoints;
 
   // Selected method configuration
   const currentMethod = PAYMENT_METHODS.find(m => m.id === selectedMethodId) || PAYMENT_METHODS[0];
@@ -66,8 +67,13 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
   };
 
   const handlePresetSelect = (pts: number) => {
-    setPointsToWithdraw(pts);
-    setErrorMessage('');
+    const validPts = Math.max(minPoints, pts);
+    setPointsToWithdraw(validPts);
+    if (currentPoints < minPoints || validPts > currentPoints) {
+      setErrorMessage('Saldo insuficiente para levantamento.');
+    } else {
+      setErrorMessage('');
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -79,15 +85,15 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
       return;
     }
 
-    // Validation 1: Minimum withdrawal
+    // Validation 1: Minimum withdrawal (5.000 points = US$5)
     if (pointsToWithdraw < minPoints) {
       setErrorMessage(`O levantamento mínimo é de ${minPoints.toLocaleString()} pontos (US$ 5,00).`);
       return;
     }
 
     // Validation 2: User Balance
-    if (pointsToWithdraw > currentPoints) {
-      setErrorMessage('Saldo insuficiente para este levantamento.');
+    if (currentPoints < minPoints || pointsToWithdraw > currentPoints) {
+      setErrorMessage('Saldo insuficiente para levantamento.');
       return;
     }
 
@@ -145,12 +151,8 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
         updatedAt: new Date().toISOString()
       });
 
-      // Deduct points from user balance immediately
-      await updatePoints(
-        -pointsToWithdraw,
-        `Levantamento ${currentMethod.name} ($${amountUsd.toFixed(2)})`,
-        'withdrawal'
-      );
+      // Refresh fresh profile from database transaction
+      await refreshProfile();
 
       confetti({
         particleCount: 80,
@@ -162,7 +164,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
       setSuccessInfo(newWithdrawal);
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err.message || 'Erro ao submeter pedido de levantamento.');
+      setErrorMessage(err.message || 'Saldo insuficiente para levantamento.');
     } finally {
       setIsSubmitting(false);
     }
@@ -452,6 +454,18 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
           </div>
 
           {/* Real Liquidity Notice & Error display */}
+          {hasInsufficientBalance && (
+            <div className="p-4 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs flex items-center gap-2.5 animate-in fade-in">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-amber-400" />
+              <div>
+                <p className="font-bold text-amber-300">Saldo insuficiente para levantamento.</p>
+                <p className="text-[11px] text-slate-300 mt-0.5">
+                  O valor mínimo obrigatório para levantar é de <strong>5.000 pontos (US$ 5,00)</strong>. O seu saldo atual é de <strong className="text-amber-400">{currentPoints.toLocaleString()} pontos</strong>.
+                </p>
+              </div>
+            </div>
+          )}
+
           {errorMessage && (
             <div className="p-4 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2.5 animate-in fade-in">
               <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
@@ -459,14 +473,20 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
             </div>
           )}
 
-          {/* Processing Notice */}
+          {/* Processing Notice & Financial Policy */}
           <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 space-y-2">
             <div className="flex items-center gap-2 text-amber-400 font-bold">
               <ShieldCheck className="w-4 h-4" />
-              <span>Informações sobre o Levantamento</span>
+              <span>Transparência e Regras Financeiras do EarnWorld</span>
             </div>
-            <p className="text-slate-400 leading-relaxed">
-              O pagamento é enviado diretamente para o seu número M-Pesa (Vodacom), e-Mola (Movitel) ou carteira internacional cadastrada. O prazo normal de validação e processamento é de 1 a 48 horas úteis. Sem taxas de levantamento.
+            <p className="text-slate-400 leading-relaxed text-[11px]">
+              • <strong>Sem pagamentos automáticos:</strong> Não prometemos transferências automáticas nem dinheiro não gerado pela plataforma. Todos os pedidos são verificados contra atividades legítimas.
+            </p>
+            <p className="text-slate-400 leading-relaxed text-[11px]">
+              • <strong>Receita real auditada:</strong> Os pagamentos são aprovados apenas com fundos líquidos reais gerados por anúncios e ofertas parceiras. Se o fundo estiver em liquidação, o estado indicará <em>"Aguardando receita disponível para pagamento"</em>.
+            </p>
+            <p className="text-slate-400 leading-relaxed text-[11px]">
+              • <strong>Referência visual:</strong> A taxa de 1.000 pontos = US$ 1,00 e US$ 1,00 = 64,00 MZN é apenas uma referência de conversão e não significa que existe dinheiro imediatamente disponível para pagamento sem a auditoria da plataforma.
             </p>
           </div>
 
@@ -483,11 +503,20 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
             ) : (
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="w-full py-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-base hover:from-amber-400 hover:to-yellow-300 shadow-xl shadow-amber-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                disabled={isSubmitting || hasInsufficientBalance}
+                className={`w-full py-4 rounded-xl font-black text-base transition-all flex items-center justify-center gap-2 ${
+                  hasInsufficientBalance
+                    ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 hover:from-amber-400 hover:to-yellow-300 shadow-xl shadow-amber-500/25 active:scale-95'
+                }`}
               >
                 {isSubmitting ? (
                   <span>A processar o pedido...</span>
+                ) : hasInsufficientBalance ? (
+                  <>
+                    <AlertTriangle className="w-5 h-5 text-amber-500" />
+                    <span>Saldo insuficiente para levantamento (Mínimo 5.000 pts)</span>
+                  </>
                 ) : (
                   <>
                     <Wallet className="w-5 h-5 text-slate-950" />

@@ -35,7 +35,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
   onOpenAuth,
   setActiveTab
 }) => {
-  const { currentUser, updatePoints } = useAuth();
+  const { currentUser, updatePoints, claimCheckIn } = useAuth();
   const { t } = useLanguage();
 
   const [tasks, setTasks] = useState<TaskItem[]>(INITIAL_TASKS);
@@ -67,7 +67,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
     setClaimingCheckin(true);
     try {
       const bonus = config.dailyCheckInPoints + Math.min(50, currentStreak * 5);
-      await updatePoints(bonus, `Check-in Diário (Dia ${currentStreak + 1})`, 'checkin');
+      await claimCheckIn(bonus);
       
       confetti({
         particleCount: 90,

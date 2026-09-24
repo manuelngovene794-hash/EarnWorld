@@ -20,7 +20,11 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
       allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isOwner(userId) || isAdmin();
+      // Allow updates only if admin, or if owner and not attempting privilege escalation or unvalidated role change
+      allow update: if isAdmin() || (
+        isOwner(userId) && 
+        request.resource.data.role == resource.data.role
+      );
       allow delete: if isAdmin();
     }
 
@@ -36,7 +40,11 @@ service cloud.firestore {
 
     match /withdrawals/{withdrawalId} {
       allow read: if (isAuthenticated() && resource.data.userId == request.auth.uid) || isAdmin();
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      // Server/database validation: Minimum 5.000 points and initial status must be pending
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.pointsDeducted >= 5000 &&
+        request.resource.data.status == 'pending';
       allow update, delete: if isAdmin();
     }
 

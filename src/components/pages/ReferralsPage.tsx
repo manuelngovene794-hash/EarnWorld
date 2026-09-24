@@ -68,39 +68,11 @@ export const ReferralsPage: React.FC<ReferralsPageProps> = ({ config, onOpenAuth
             status: 'confirmed'
           })));
         } else {
-          // Default initial demonstration referrals if user has an active code
-          setReferrals([
-            {
-              id: 'ref-1',
-              name: 'Armando M.',
-              email: 'ar*****@gmail.com',
-              country: 'MZ',
-              createdAt: new Date(Date.now() - 86400000 * 2).toLocaleDateString(),
-              bonusPoints: bonusPts,
-              status: 'confirmed'
-            },
-            {
-              id: 'ref-2',
-              name: 'Helena S.',
-              email: 'he*****@yahoo.com',
-              country: 'MZ',
-              createdAt: new Date(Date.now() - 86400000 * 5).toLocaleDateString(),
-              bonusPoints: bonusPts,
-              status: 'confirmed'
-            },
-            {
-              id: 'ref-3',
-              name: 'Carlos T.',
-              email: 'ca*****@outlook.com',
-              country: 'MZ',
-              createdAt: new Date(Date.now() - 86400000 * 7).toLocaleDateString(),
-              bonusPoints: bonusPts,
-              status: 'confirmed'
-            }
-          ]);
+          setReferrals([]);
         }
       } catch (e) {
         console.warn('Error loading referrals:', e);
+        setReferrals([]);
       } finally {
         setLoading(false);
       }

@@ -29,6 +29,11 @@ export interface AppConfig {
   adRewardPoints: number;
   referralBonusPoints: number;
   maxAdsPerHour: number;
+  // Monetization fields (Monetag / Google AdMob)
+  adNetworkProvider?: 'monetag' | 'admob' | 'direct';
+  monetagZoneId?: string;
+  admobPublisherId?: string;
+  admobSlotId?: string;
 }
 
 export type TaskCategory = 'survey' | 'offer' | 'video' | 'daily' | 'special';

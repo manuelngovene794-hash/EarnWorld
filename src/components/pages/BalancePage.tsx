@@ -164,9 +164,12 @@ export const BalancePage: React.FC<BalancePageProps> = ({
           </div>
 
           <div className="mt-5 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-            <span>Cotação Oficial:</span>
+            <span>Referência Visual:</span>
             <span className="text-emerald-300 font-bold">US$1 = {usdRate.toFixed(2)} MZN</span>
           </div>
+          <p className="text-[10px] text-slate-400 mt-2 italic">
+            * A conversão exibida é uma referência de cálculo e não significa que existe dinheiro imediatamente disponível para pagamento sem a validação da plataforma.
+          </p>
         </div>
 
       </div>

@@ -9,7 +9,11 @@ export const DEFAULT_CONFIG: AppConfig = {
   dailyCheckInPoints: 35,
   adRewardPoints: 25,
   referralBonusPoints: 200,
-  maxAdsPerHour: 8
+  maxAdsPerHour: 8,
+  adNetworkProvider: 'monetag',
+  monetagZoneId: 'monetag_rewarded_inpage',
+  admobPublisherId: 'ca-pub-monetization-partner',
+  admobSlotId: 'rewarded_slot_web'
 };
 
 export const PAYMENT_METHODS: PaymentMethodConfig[] = [

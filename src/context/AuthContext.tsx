@@ -23,6 +23,7 @@ interface AuthContextType {
   registerWithPhone: (phone: string, name: string, country: string, verificationCode: string, referralCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   updatePoints: (delta: number, description: string, type: any) => Promise<void>;
+  claimCheckIn: (bonusPoints: number) => Promise<void>;
   refreshProfile: () => Promise<void>;
   updateUserProfile: (updates: Partial<UserProfile>) => Promise<void>;
   quickLoginAsDemoUser: (country?: string) => Promise<void>;
@@ -315,6 +316,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
+  const claimCheckIn = async (bonusPoints: number) => {
+    if (!currentUser) return;
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (currentUser.lastCheckInDate === todayStr) {
+      throw new Error('Check-in diário já realizado hoje.');
+    }
+
+    try {
+      const result = await storageService.recordDailyCheckIn(currentUser.id, bonusPoints);
+      const updated: UserProfile = {
+        ...currentUser,
+        pointsBalance: result.newBalance,
+        totalEarnedPoints: (currentUser.totalEarnedPoints || 0) + bonusPoints,
+        lastCheckInDate: todayStr,
+        consecutiveCheckIns: result.newStreak
+      };
+      setCurrentUser(updated);
+      localStorage.setItem('earnworld_user_cache', JSON.stringify(updated));
+      if (localStorage.getItem('earnworld_demo_session')) {
+        localStorage.setItem('earnworld_demo_session', JSON.stringify(updated));
+      }
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
+  };
+
   const refreshProfile = async () => {
     if (!currentUser) return;
     const fresh = await storageService.getUserProfile(currentUser.id);
@@ -350,6 +378,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         registerWithPhone,
         logout,
         updatePoints,
+        claimCheckIn,
         refreshProfile,
         updateUserProfile,
         quickLoginAsDemoUser
