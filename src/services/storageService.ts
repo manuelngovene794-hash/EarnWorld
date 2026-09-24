@@ -82,8 +82,15 @@ export const storageService = {
 
   async saveUserProfile(profile: UserProfile): Promise<void> {
     try {
+      // Remove any undefined keys to avoid Firestore serialization errors
+      const cleanData: Record<string, any> = {};
+      for (const [key, value] of Object.entries(profile)) {
+        if (value !== undefined) {
+          cleanData[key] = value;
+        }
+      }
       const userRef = doc(db, 'users', profile.id);
-      await setDoc(userRef, profile, { merge: true });
+      await setDoc(userRef, cleanData, { merge: true });
     } catch (e) {
       console.error('Failed to save user profile:', e);
       throw e;

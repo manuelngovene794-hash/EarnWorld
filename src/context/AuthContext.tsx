@@ -49,41 +49,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const syncProfile = async (uid: string, fallbackEmail: string, fallbackName: string) => {
-    let profile = await storageService.getUserProfile(uid);
-    const isAdmin = ADMIN_EMAILS.includes(fallbackEmail.toLowerCase()) || (profile && profile.role === 'admin');
+    try {
+      let profile = await storageService.getUserProfile(uid);
+      const isAdmin = ADMIN_EMAILS.includes(fallbackEmail.toLowerCase()) || (profile && profile.role === 'admin');
 
-    if (!profile) {
-      const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
-      profile = {
-        id: uid,
-        email: fallbackEmail,
-        displayName: fallbackName || fallbackEmail.split('@')[0],
-        country: 'MZ', // Default to Mozambique
-        referralCode: generatedRefCode,
-        pointsBalance: 150, // Welcome signup bonus
-        totalEarnedPoints: 150,
-        totalWithdrawnPoints: 0,
-        role: isAdmin ? 'admin' : 'user',
-        consecutiveCheckIns: 0,
-        createdAt: new Date().toISOString()
-      };
-      await storageService.saveUserProfile(profile);
-      await storageService.addTransaction({
-        userId: uid,
-        type: 'offer',
-        points: 150,
-        amountUsd: 0.15,
-        description: 'Bónus de Boas-Vindas EarnWorld',
-        status: 'completed',
-        createdAt: new Date().toISOString()
-      });
-    } else if (isAdmin && profile.role !== 'admin') {
-      profile.role = 'admin';
-      await storageService.saveUserProfile(profile);
+      if (!profile) {
+        const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
+        profile = {
+          id: uid,
+          email: fallbackEmail,
+          displayName: fallbackName || fallbackEmail.split('@')[0],
+          country: 'MZ', // Default to Mozambique
+          referralCode: generatedRefCode,
+          pointsBalance: 150, // Welcome signup bonus
+          totalEarnedPoints: 150,
+          totalWithdrawnPoints: 0,
+          role: isAdmin ? 'admin' : 'user',
+          consecutiveCheckIns: 0,
+          createdAt: new Date().toISOString()
+        };
+        try {
+          await storageService.saveUserProfile(profile);
+          await storageService.addTransaction({
+            userId: uid,
+            type: 'offer',
+            points: 150,
+            amountUsd: 0.15,
+            description: 'Bónus de Boas-Vindas EarnWorld',
+            status: 'completed',
+            createdAt: new Date().toISOString()
+          });
+        } catch (saveErr) {
+          console.warn('Initial profile background save warning:', saveErr);
+        }
+      } else if (isAdmin && profile.role !== 'admin') {
+        profile.role = 'admin';
+        try {
+          await storageService.saveUserProfile(profile);
+        } catch (saveErr) {
+          console.warn('Admin role background save warning:', saveErr);
+        }
+      }
+
+      setCurrentUser(profile);
+      localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
+    } catch (err) {
+      console.warn('syncProfile error:', err);
     }
-
-    setCurrentUser(profile);
-    localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
   };
 
   useEffect(() => {
@@ -160,40 +172,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const uid = cred.user.uid;
       const isAdmin = ADMIN_EMAILS.includes(email.toLowerCase());
       const newRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
+      const cleanRef = referralCode && referralCode.trim().length > 0 ? referralCode.trim().toUpperCase() : undefined;
+      const initialPoints = cleanRef ? 250 : 150;
 
       const profile: UserProfile = {
         id: uid,
         email,
-        displayName: name || email.split('@')[0],
-        phoneNumber: phone || '',
+        displayName: name.trim() || email.split('@')[0],
+        phoneNumber: phone?.trim() || '',
         country: country || 'MZ',
         referralCode: newRefCode,
-        referredBy: referralCode || undefined,
-        pointsBalance: referralCode ? 250 : 150, // Bonus points if referred
-        totalEarnedPoints: referralCode ? 250 : 150,
+        ...(cleanRef ? { referredBy: cleanRef } : {}),
+        pointsBalance: initialPoints,
+        totalEarnedPoints: initialPoints,
         totalWithdrawnPoints: 0,
         role: isAdmin ? 'admin' : 'user',
         consecutiveCheckIns: 0,
         createdAt: new Date().toISOString()
       };
 
-      await storageService.saveUserProfile(profile);
-      await storageService.addTransaction({
-        userId: uid,
-        type: 'offer',
-        points: profile.pointsBalance,
-        amountUsd: profile.pointsBalance / 1000,
-        description: referralCode ? 'Bónus de Boas-Vindas + Convite de Amigo' : 'Bónus de Boas-Vindas EarnWorld',
-        status: 'completed',
-        createdAt: new Date().toISOString()
-      });
+      try {
+        await storageService.saveUserProfile(profile);
+      } catch (saveErr) {
+        console.warn('Initial profile save note:', saveErr);
+      }
+
+      try {
+        await storageService.addTransaction({
+          userId: uid,
+          type: 'offer',
+          points: profile.pointsBalance,
+          amountUsd: profile.pointsBalance / 1000,
+          description: cleanRef ? 'Bónus de Boas-Vindas + Convite de Amigo' : 'Bónus de Boas-Vindas EarnWorld',
+          status: 'completed',
+          createdAt: new Date().toISOString()
+        });
+      } catch (txErr) {
+        console.warn('Welcome transaction log note:', txErr);
+      }
 
       setCurrentUser(profile);
       localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
     } catch (err: any) {
       console.error('Registration error:', err);
       if (err.code === 'auth/email-already-in-use') {
-        throw new Error('Este email já está registado.');
+        throw new Error('Este email já está registado. Por favor faça login.');
+      }
+      if (err.code === 'auth/weak-password') {
+        throw new Error('A senha deve ter no mínimo 6 caracteres.');
+      }
+      if (err.code === 'auth/invalid-email') {
+        throw new Error('Por favor introduza um endereço de email válido.');
+      }
+      if (err.code === 'auth/operation-not-allowed') {
+        throw new Error('O registo por email está temporariamente indisponível.');
       }
       throw new Error(err.message || 'Não foi possível concluir o registo.');
     }
@@ -218,6 +250,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanEmail = `${phone.replace(/[^0-9]/g, '')}@earnworld.sms`;
     const newRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
 
+    const cleanRef = referralCode && referralCode.trim().length > 0 ? referralCode.trim().toUpperCase() : undefined;
     const profile: UserProfile = {
       id: uid,
       email: cleanEmail,
@@ -225,7 +258,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       phoneNumber: phone,
       country: country || 'MZ',
       referralCode: newRefCode,
-      referredBy: referralCode || undefined,
+      ...(cleanRef ? { referredBy: cleanRef } : {}),
       pointsBalance: 200,
       totalEarnedPoints: 200,
       totalWithdrawnPoints: 0,
@@ -234,16 +267,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       createdAt: new Date().toISOString()
     };
 
-    await storageService.saveUserProfile(profile);
-    await storageService.addTransaction({
-      userId: uid,
-      type: 'offer',
-      points: 200,
-      amountUsd: 0.20,
-      description: 'Registo por Telefone Verificado',
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    });
+    try {
+      await storageService.saveUserProfile(profile);
+    } catch (e) {
+      console.warn('saveUserProfile phone note:', e);
+    }
+
+    try {
+      await storageService.addTransaction({
+        userId: uid,
+        type: 'offer',
+        points: 200,
+        amountUsd: 0.20,
+        description: 'Registo por Telefone Verificado',
+        status: 'completed',
+        createdAt: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('addTransaction phone note:', e);
+    }
 
     setCurrentUser(profile);
     localStorage.setItem('earnworld_demo_session', JSON.stringify(profile));

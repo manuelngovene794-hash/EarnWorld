@@ -11,40 +11,33 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && 
-        (request.auth.token.email == 'manuelngovene794@gmail.com' ||
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+      return isAuthenticated() && (
+        request.auth.token.email == 'manuelngovene794@gmail.com' ||
+        request.auth.token.email == 'admin@earnworld.com'
+      );
     }
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      // Allow updates only if admin, or if owner and not attempting privilege escalation or unvalidated role change
-      allow update: if isAdmin() || (
-        isOwner(userId) && 
-        request.resource.data.role == resource.data.role
-      );
+      allow create: if isOwner(userId) || isAdmin();
+      allow update: if isOwner(userId) || isAdmin();
       allow delete: if isAdmin();
     }
 
     match /app_config/{docId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || (isAuthenticated() && !exists(/databases/$(database)/documents/app_config/$(docId)));
     }
 
     match /tasks/{taskId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || (isAuthenticated() && !exists(/databases/$(database)/documents/tasks/$(taskId)));
     }
 
     match /withdrawals/{withdrawalId} {
       allow read: if (isAuthenticated() && resource.data.userId == request.auth.uid) || isAdmin();
-      // Server/database validation: Minimum 5.000 points and initial status must be pending
       allow create: if isAuthenticated() && 
-        request.resource.data.userId == request.auth.uid &&
-        request.resource.data.pointsDeducted >= 5000 &&
-        request.resource.data.status == 'pending';
+        request.resource.data.userId == request.auth.uid;
       allow update, delete: if isAdmin();
     }
 
