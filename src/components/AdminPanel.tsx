@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { AppConfig, WithdrawalRequest, UserProfile, PaymentMethodConfig, TaskItem } from '../types';
 import { storageService } from '../services/storageService';
+import { monetagService } from '../services/monetagService';
 import { PAYMENT_METHODS, INITIAL_TASKS } from '../data/initialData';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -52,14 +53,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
 
   // Editable config fields
   const [usdMznRate, setUsdMznRate] = useState<number>(config.usdToMznRate || 64.0);
-  const [availableRealRev, setAvailableRealRev] = useState<number>(config.availableRealRevenueUsd || 1450.0);
-  const [estimatedAdRev, setEstimatedAdRev] = useState<number>(config.estimatedAdRevenueUsd || 3820.5);
+  const [availableRealRev, setAvailableRealRev] = useState<number>(Math.max(0, config.availableRealRevenueUsd || 0));
+  const [estimatedAdRev, setEstimatedAdRev] = useState<number>(Math.max(0, config.estimatedAdRevenueUsd || 0));
   const [depositAmount, setDepositAmount] = useState<number>(500);
   const [minPts, setMinPts] = useState<number>(config.minWithdrawalPoints || 5000);
   const [adPts, setAdPts] = useState<number>(config.adRewardPoints || 25);
   const [refPts, setRefPts] = useState<number>(config.referralBonusPoints || 200);
   const [adProvider, setAdProvider] = useState<'monetag' | 'admob' | 'direct'>(config.adNetworkProvider || 'monetag');
   const [monetagZone, setMonetagZone] = useState<string>(config.monetagZoneId || 'monetag_rewarded_inpage');
+  const [monetagApiKey, setMonetagApiKey] = useState<string>(config.monetagApiKey || '');
+  const [isSyncingMonetag, setIsSyncingMonetag] = useState<boolean>(false);
   const [admobPub, setAdmobPub] = useState<string>(config.admobPublisherId || 'ca-pub-monetization-partner');
 
   // New task form state
@@ -106,19 +109,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
     loadAdminData();
   }, []);
 
+  useEffect(() => {
+    if (config) {
+      setAvailableRealRev(Math.max(0, config.availableRealRevenueUsd || 0));
+      setEstimatedAdRev(Math.max(0, config.estimatedAdRevenueUsd || 0));
+      if (config.monetagApiKey !== undefined) setMonetagApiKey(config.monetagApiKey);
+    }
+  }, [config.availableRealRevenueUsd, config.monetagApiKey]);
+
   // Update rates & settings
   const handleSaveSettings = async () => {
     try {
       const updated: AppConfig = {
         ...config,
         usdToMznRate: Number(usdMznRate),
-        availableRealRevenueUsd: Number(availableRealRev),
-        estimatedAdRevenueUsd: Number(estimatedAdRev),
+        availableRealRevenueUsd: Math.max(0, Number(availableRealRev)),
+        estimatedAdRevenueUsd: Math.max(0, Number(estimatedAdRev)),
         minWithdrawalPoints: Number(minPts),
         adRewardPoints: Number(adPts),
         referralBonusPoints: Number(refPts),
         adNetworkProvider: adProvider,
         monetagZoneId: monetagZone,
+        monetagApiKey: monetagApiKey.trim(),
         admobPublisherId: admobPub
       };
       await storageService.updateAppConfig(updated);
@@ -129,10 +141,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
     }
   };
 
+  // Sync real live revenue from Monetag API
+  const handleSyncMonetag = async () => {
+    setIsSyncingMonetag(true);
+    try {
+      const currentConf: AppConfig = {
+        ...config,
+        monetagApiKey: monetagApiKey.trim()
+      };
+      const result = await monetagService.syncRealRevenue(currentConf);
+      if (result.synced) {
+        setAvailableRealRev(result.balanceUsd);
+        onUpdateConfig({
+          ...config,
+          availableRealRevenueUsd: result.balanceUsd,
+          monetagApiKey: monetagApiKey.trim()
+        });
+      }
+      showToast(result.message);
+    } catch (err: any) {
+      showToast(`Erro ao sincronizar com a Monetag: ${err.message}`);
+    } finally {
+      setIsSyncingMonetag(false);
+    }
+  };
+
   // Inject Real Treasury Liquidity
   const handleDepositLiquidity = async () => {
     if (depositAmount <= 0) return;
-    const newAvailable = availableRealRev + depositAmount;
+    const newAvailable = Math.max(0, availableRealRev + depositAmount);
     setAvailableRealRev(newAvailable);
     const updated: AppConfig = {
       ...config,
@@ -169,27 +206,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   };
 
   const handleMarkAsPaid = async (wth: WithdrawalRequest) => {
-    if (config.availableRealRevenueUsd < wth.amountUsd) {
-      alert('Não é possível marcar como pago sem receita real suficiente no fundo disponível!');
-      return;
-    }
+    const txRef = txRefInput[wth.id]?.trim() || `EW-PAY-${Date.now().toString().slice(-6)}`;
 
-    const txRef = txRefInput[wth.id] || `EW-PAY-${Date.now().toString().slice(-6)}`;
-
-    // Deduct real liquid revenue from treasury
-    const newAvailableRev = Math.max(0, config.availableRealRevenueUsd - wth.amountUsd);
-    setAvailableRealRev(newAvailableRev);
-    const updatedCfg: AppConfig = {
-      ...config,
-      availableRealRevenueUsd: newAvailableRev
-    };
-    await storageService.updateAppConfig(updatedCfg);
-    onUpdateConfig(updatedCfg);
-
+    // Note: Treasury funds were already reserved at request creation time.
+    // Confirm status as 'paid' with payment provider confirmation reference.
     const updatedWth: WithdrawalRequest = {
       ...wth,
       status: 'paid',
-      statusMessage: `Pago com sucesso via ${wth.paymentMethod}. Ref: ${txRef}`,
+      statusMessage: `Pago com sucesso via ${wth.paymentMethod.toUpperCase()}. Ref: ${txRef}`,
       txReference: txRef,
       updatedAt: new Date().toISOString()
     };
@@ -201,7 +225,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   };
 
   const handleRejectWithdrawal = async (wth: WithdrawalRequest, reason = 'Dados de conta ou número incorretos.') => {
-    // Refund points to user
+    // 1. Refund points to user
     await storageService.updateUserBalance(wth.userId, wth.pointsDeducted);
     await storageService.addTransaction({
       userId: wth.userId,
@@ -212,6 +236,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
       status: 'completed',
       createdAt: new Date().toISOString()
     });
+
+    // 2. Return reserved funds back to treasury available balance
+    const restoredRevenue = Math.max(0, Number(((config.availableRealRevenueUsd || 0) + wth.amountUsd).toFixed(2)));
+    setAvailableRealRev(restoredRevenue);
+    const updatedCfg: AppConfig = {
+      ...config,
+      availableRealRevenueUsd: restoredRevenue
+    };
+    await storageService.updateAppConfig(updatedCfg);
+    onUpdateConfig(updatedCfg);
 
     const updatedWth: WithdrawalRequest = {
       ...wth,
@@ -521,7 +555,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                               <span>{w.paymentMethod}</span>
                               {w.country === 'MZ' && <span>🇲🇿</span>}
                             </div>
-                            <p className="text-[11px] font-mono text-slate-300 mt-0.5">{w.accountDetails}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <p className="text-[11px] font-mono text-slate-300">{w.accountDetails}</p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(w.accountDetails);
+                                  showToast('Dados de pagamento copiados!');
+                                }}
+                                title="Copiar dados do destinatário"
+                                className="text-slate-400 hover:text-amber-400 text-[10px] px-1.5 py-0.5 rounded bg-slate-800 transition-colors"
+                              >
+                                Copiar
+                              </button>
+                            </div>
                           </td>
                           <td className="p-4">
                             <p className="font-bold text-white">${w.amountUsd.toFixed(2)} USD</p>
@@ -550,40 +597,51 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                               <p className="text-[10px] text-slate-400 font-mono mt-1">Ref: {w.txReference}</p>
                             )}
                           </td>
-                          <td className="p-4 text-right space-x-1 whitespace-nowrap">
-                            {w.status === 'pending' && (
-                              <>
-                                {isWaitingLiquidity && w.statusMessage !== 'Aguardando receita disponível para pagamento.' && (
+                          <td className="p-4 text-right space-y-1.5 whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1">
+                              {w.status === 'pending' && (
+                                <>
+                                  {isWaitingLiquidity && w.statusMessage !== 'Aguardando receita disponível para pagamento.' && (
+                                    <button
+                                      onClick={() => handleMarkWaitingLiquidity(w)}
+                                      className="px-2 py-1 rounded bg-orange-600/80 hover:bg-orange-600 text-white font-bold text-[10px]"
+                                      title="Notificar que pedido aguarda liquidez real"
+                                    >
+                                      Aguardar Receita
+                                    </button>
+                                  )}
                                   <button
-                                    onClick={() => handleMarkWaitingLiquidity(w)}
-                                    className="px-2 py-1 rounded bg-orange-600/80 hover:bg-orange-600 text-white font-bold text-[10px]"
-                                    title="Notificar que pedido aguarda liquidez real"
+                                    onClick={() => handleApproveWithdrawal(w)}
+                                    className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px]"
                                   >
-                                    Aguardar Receita
+                                    {t('admin.approve')}
                                   </button>
-                                )}
-                                <button
-                                  onClick={() => handleApproveWithdrawal(w)}
-                                  className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px]"
-                                >
-                                  {t('admin.approve')}
-                                </button>
-                                <button
-                                  onClick={() => handleRejectWithdrawal(w)}
-                                  className="px-2.5 py-1 rounded bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-[11px]"
-                                >
-                                  {t('admin.reject')}
-                                </button>
-                              </>
-                            )}
+                                  <button
+                                    onClick={() => handleRejectWithdrawal(w)}
+                                    className="px-2.5 py-1 rounded bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-[11px]"
+                                  >
+                                    {t('admin.reject')}
+                                  </button>
+                                </>
+                              )}
+                            </div>
 
                             {(w.status === 'approved' || (w.status === 'pending' && !isWaitingLiquidity)) && (
-                              <button
-                                onClick={() => handleMarkAsPaid(w)}
-                                className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow"
-                              >
-                                {t('admin.mark_paid')}
-                              </button>
+                              <div className="flex items-center justify-end gap-1.5">
+                                <input
+                                  type="text"
+                                  placeholder="Ref. M-Pesa / Tx ID..."
+                                  value={txRefInput[w.id] || ''}
+                                  onChange={(e) => setTxRefInput(prev => ({ ...prev, [w.id]: e.target.value }))}
+                                  className="w-32 px-2 py-1 rounded bg-slate-950 border border-slate-700 text-white text-[10px] font-mono focus:border-amber-400 focus:outline-none"
+                                />
+                                <button
+                                  onClick={() => handleMarkAsPaid(w)}
+                                  className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow whitespace-nowrap"
+                                >
+                                  {t('admin.mark_paid')}
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -1088,6 +1146,48 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                   placeholder="ca-pub-XXXXXXXXXXXXXXXX"
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-mono"
                 />
+              </div>
+            </div>
+
+            {/* Monetag Real Revenue API Integration */}
+            <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Integração de Receita Real Monetag (API)</span>
+                  </h5>
+                  <p className="text-[11px] text-slate-400">
+                    Insira a sua chave de API da Monetag para sincronizar a receita real líquida e liberar saques automaticamente.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSyncMonetag}
+                  disabled={isSyncingMonetag}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingMonetag ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingMonetag ? 'A sincronizar...' : 'Sincronizar Monetag'}</span>
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-slate-300">
+                  Chave de API Monetag (Bearer Token):
+                </label>
+                <input
+                  type="password"
+                  value={monetagApiKey}
+                  onChange={(e) => setMonetagApiKey(e.target.value)}
+                  placeholder="Cole aqui a sua chave de API gerada no painel da Monetag"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:border-amber-400 focus:outline-none"
+                />
+                {config.monetagLastSync && (
+                  <p className="text-[10px] text-slate-500">
+                    Última sincronização: {new Date(config.monetagLastSync).toLocaleString('pt-PT')}
+                  </p>
+                )}
               </div>
             </div>
           </div>

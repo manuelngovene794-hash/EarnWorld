@@ -2,8 +2,8 @@ import { AppConfig, PaymentMethodConfig, TaskItem } from '../types';
 
 export const DEFAULT_CONFIG: AppConfig = {
   usdToMznRate: 64.0,              // 1 USD = 64.00 MZN (Admin configurable)
-  availableRealRevenueUsd: 1450.00, // Real liquid funds available to honor payouts
-  estimatedAdRevenueUsd: 3820.50,   // Estimated ad network revenues (NOT available for immediate payouts)
+  availableRealRevenueUsd: 0.00,   // Real liquid funds available to honor payouts (Strictly from real Monetag revenue / verified deposits)
+  estimatedAdRevenueUsd: 0.00,     // Real ad network revenues
   minWithdrawalPoints: 5000,        // 5000 pts = $5.00
   pointsPerDollar: 1000,            // 1000 pts = $1.00
   dailyCheckInPoints: 35,

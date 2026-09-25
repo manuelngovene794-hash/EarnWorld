@@ -284,6 +284,27 @@ export const storageService = {
       throw new Error(`O levantamento mínimo é de ${minPoints.toLocaleString()} pontos (US$ 5,00).`);
     }
 
+    const PAUSE_MESSAGE = '💰 Saques em pausa\nNeste momento os fundos para pagamentos estão indisponíveis. Os teus pontos continuam seguros. Continua a ganhar e tenta novamente mais tarde.';
+
+    // Check platform real treasury liquidity before touching any points
+    try {
+      const configRef = doc(db, 'app_config', CONFIG_DOC);
+      const configSnap = await getDoc(configRef);
+      const currentConfig = configSnap.exists()
+        ? ({ ...DEFAULT_CONFIG, ...configSnap.data() } as AppConfig)
+        : DEFAULT_CONFIG;
+      const availableLiquidity = Math.max(0, currentConfig.availableRealRevenueUsd ?? 0);
+
+      if (availableLiquidity < req.amountUsd) {
+        throw new Error(PAUSE_MESSAGE);
+      }
+    } catch (cfgErr: any) {
+      if (cfgErr.message === PAUSE_MESSAGE) {
+        throw cfgErr;
+      }
+      console.warn('Config liquidity check note:', cfgErr);
+    }
+
     const id = 'wth_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
     const withdrawal: WithdrawalRequest = {
       ...req,
@@ -295,8 +316,23 @@ export const storageService = {
       const wthRef = doc(db, 'withdrawals', id);
       const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
       const txRef = doc(db, 'transactions', txId);
+      const configRef = doc(db, 'app_config', CONFIG_DOC);
 
       await runTransaction(db, async (transaction) => {
+        // Atomic verification of liquidity within transaction
+        const cfgSnap = await transaction.get(configRef);
+        if (cfgSnap.exists()) {
+          const liveCfg = cfgSnap.data() as AppConfig;
+          const liveLiquidity = Math.max(0, liveCfg.availableRealRevenueUsd ?? 0);
+          if (liveLiquidity < req.amountUsd) {
+            throw new Error('FUNDS_UNAVAILABLE');
+          }
+          const remainingTreasury = Math.max(0, Number((liveLiquidity - req.amountUsd).toFixed(2)));
+          transaction.update(configRef, {
+            availableRealRevenueUsd: remainingTreasury
+          });
+        }
+
         const userSnap = await transaction.get(userRef);
         if (!userSnap.exists()) {
           throw new Error('Utilizador não encontrado no sistema.');
@@ -332,33 +368,17 @@ export const storageService = {
       });
     } catch (e: any) {
       console.error('Error creating withdrawal in transaction:', e);
+      if (e.message === PAUSE_MESSAGE || e.message?.includes('FUNDS_UNAVAILABLE') || e.message?.includes('Saques em pausa')) {
+        // Do NOT deduct points! Points remain 100% safe.
+        throw new Error(PAUSE_MESSAGE);
+      }
       if (e.message?.includes('Saldo insuficiente para levantamento.')) {
         throw new Error('Saldo insuficiente para levantamento.');
       }
       if (e.message?.includes('O levantamento mínimo')) {
         throw e;
       }
-      
-      // Fallback for offline/preview simulated user cache
-      const cached = localStorage.getItem('earnworld_user_cache');
-      if (cached) {
-        try {
-          const user = JSON.parse(cached);
-          if ((user.pointsBalance || 0) < req.pointsDeducted) {
-            throw new Error('Saldo insuficiente para levantamento.');
-          }
-          user.pointsBalance = Math.max(0, (user.pointsBalance || 0) - req.pointsDeducted);
-          user.totalWithdrawnPoints = (user.totalWithdrawnPoints || 0) + req.pointsDeducted;
-          localStorage.setItem('earnworld_user_cache', JSON.stringify(user));
-        } catch (err: any) {
-          if (err.message === 'Saldo insuficiente para levantamento.') throw err;
-        }
-      }
-      try {
-        await setDoc(doc(db, 'withdrawals', id), withdrawal);
-      } catch (err) {
-        // ignore
-      }
+      throw e;
     }
     return withdrawal;
   },

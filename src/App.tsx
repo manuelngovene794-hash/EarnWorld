@@ -18,6 +18,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppConfig } from './types';
 import { DEFAULT_CONFIG } from './data/initialData';
 import { storageService } from './services/storageService';
+import { monetagService } from './services/monetagService';
 
 function MainApp() {
   const { currentUser } = useAuth();
@@ -70,6 +71,7 @@ function MainApp() {
   useEffect(() => {
     const unsubscribe = storageService.subscribeAppConfig((newCfg) => {
       setConfig(newCfg);
+      monetagService.autoSyncIfConfigured(newCfg);
     });
     return () => unsubscribe();
   }, []);

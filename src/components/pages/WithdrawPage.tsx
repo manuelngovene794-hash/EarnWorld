@@ -52,6 +52,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
   const amountUsd = pointsToWithdraw / pointsPerDollar;
   const amountMzn = amountUsd * usdRate;
   const hasInsufficientBalance = currentPoints < minPoints || pointsToWithdraw > currentPoints;
+  const hasPlatformFunds = (config.availableRealRevenueUsd || 0) >= amountUsd;
 
   // Selected method configuration
   const currentMethod = PAYMENT_METHODS.find(m => m.id === selectedMethodId) || PAYMENT_METHODS[0];
@@ -97,13 +98,19 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
       return;
     }
 
-    // Validation 3: Country support
+    // Validation 3: Platform Treasury Liquidity
+    if (!hasPlatformFunds) {
+      setErrorMessage('💰 Saques em pausa\nNeste momento os fundos para pagamentos estão indisponíveis. Os teus pontos continuam seguros. Continua a ganhar e tenta novamente mais tarde.');
+      return;
+    }
+
+    // Validation 4: Country support
     if (!isMethodAvailableForCountry(currentMethod, userCountry)) {
       setErrorMessage('Método de pagamento indisponível no seu país.');
       return;
     }
 
-    // Validation 4: Required fields
+    // Validation 5: Required fields
     for (const field of currentMethod.fields) {
       const val = fieldValues[field.id];
       if (!val || val.trim().length === 0) {
@@ -120,15 +127,14 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
     setIsSubmitting(true);
     setShowConfirmModal(false);
 
-    try {
-      // Core financial transparency check:
-      // Does EarnWorld currently have real available liquid revenue?
-      const hasRealLiquidity = (config.availableRealRevenueUsd || 0) >= amountUsd;
-      const initialStatus = 'pending';
-      const statusMessage = hasRealLiquidity
-        ? 'Aguardando validação do administrador.'
-        : 'Aguardando receita disponível para pagamento.';
+    // Final security check: Do not deduct points if platform funds are insufficient
+    if (!hasPlatformFunds) {
+      setIsSubmitting(false);
+      setErrorMessage('💰 Saques em pausa\nNeste momento os fundos para pagamentos estão indisponíveis. Os teus pontos continuam seguros. Continua a ganhar e tenta novamente mais tarde.');
+      return;
+    }
 
+    try {
       // Format account details
       const accountSummary = Object.entries(fieldValues)
         .map(([k, v]) => `${k}: ${v}`)
@@ -145,8 +151,8 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
         paymentMethod: selectedMethodId,
         accountDetails: accountSummary,
         accountName: fieldValues['name'] || fieldValues['holder'] || currentUser!.displayName || currentUser!.email,
-        status: initialStatus,
-        statusMessage,
+        status: 'pending',
+        statusMessage: 'Aguardando validação do administrador.',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
@@ -453,6 +459,18 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
             </div>
           </div>
 
+          {/* Saques em pausa Banner when platform funds are insufficient */}
+          {!hasPlatformFunds && (
+            <div className="p-4 rounded-2xl bg-amber-500/15 border-2 border-amber-500/40 text-amber-200 text-left space-y-1 animate-in fade-in">
+              <div className="flex items-center gap-2 text-amber-300 font-black text-sm">
+                <span>💰 Saques em pausa</span>
+              </div>
+              <p className="text-xs text-amber-200/90 leading-relaxed font-medium">
+                Neste momento os fundos para pagamentos estão indisponíveis. Os teus pontos continuam seguros. Continua a ganhar e tenta novamente mais tarde.
+              </p>
+            </div>
+          )}
+
           {/* Real Liquidity Notice & Error display */}
           {hasInsufficientBalance && (
             <div className="p-4 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs flex items-center gap-2.5 animate-in fade-in">
@@ -467,8 +485,8 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
           )}
 
           {errorMessage && (
-            <div className="p-4 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2.5 animate-in fade-in">
-              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+            <div className="p-4 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-start gap-2.5 animate-in fade-in whitespace-pre-line">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
               <span>{errorMessage}</span>
             </div>
           )}
@@ -483,7 +501,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
               • <strong>Sem pagamentos automáticos:</strong> Não prometemos transferências automáticas nem dinheiro não gerado pela plataforma. Todos os pedidos são verificados contra atividades legítimas.
             </p>
             <p className="text-slate-400 leading-relaxed text-[11px]">
-              • <strong>Receita real auditada:</strong> Os pagamentos são aprovados apenas com fundos líquidos reais gerados por anúncios e ofertas parceiras. Se o fundo estiver em liquidação, o estado indicará <em>"Aguardando receita disponível para pagamento"</em>.
+              • <strong>Receita real auditada:</strong> Os pagamentos são aprovados apenas com fundos líquidos reais gerados por anúncios e ofertas parceiras. Se o fundo estiver em liquidação, o levantamento entrará em pausa e os seus pontos permanecerão sempre seguros na sua conta.
             </p>
             <p className="text-slate-400 leading-relaxed text-[11px]">
               • <strong>Referência visual:</strong> A taxa de 1.000 pontos = US$ 1,00 e US$ 1,00 = 64,00 MZN é apenas uma referência de conversão e não significa que existe dinheiro imediatamente disponível para pagamento sem a auditoria da plataforma.
@@ -503,15 +521,17 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
             ) : (
               <button
                 type="submit"
-                disabled={isSubmitting || hasInsufficientBalance}
+                disabled={isSubmitting || hasInsufficientBalance || !hasPlatformFunds}
                 className={`w-full py-4 rounded-xl font-black text-base transition-all flex items-center justify-center gap-2 ${
-                  hasInsufficientBalance
+                  hasInsufficientBalance || !hasPlatformFunds
                     ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
                     : 'bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 hover:from-amber-400 hover:to-yellow-300 shadow-xl shadow-amber-500/25 active:scale-95'
                 }`}
               >
                 {isSubmitting ? (
                   <span>A processar o pedido...</span>
+                ) : !hasPlatformFunds ? (
+                  <span>💰 Saques em pausa</span>
                 ) : hasInsufficientBalance ? (
                   <>
                     <AlertTriangle className="w-5 h-5 text-amber-500" />

@@ -34,6 +34,10 @@ export interface AppConfig {
   monetagZoneId?: string;
   admobPublisherId?: string;
   admobSlotId?: string;
+  monetagApiKey?: string;
+  monetagLastSync?: string;
+  monetagLiveBalanceUsd?: number;
+  monetagSyncStatus?: 'connected' | 'idle' | 'error';
 }
 
 export type TaskCategory = 'survey' | 'offer' | 'video' | 'daily' | 'special';
