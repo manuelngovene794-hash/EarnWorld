@@ -29,6 +29,7 @@ import {
 import { AppConfig, WithdrawalRequest, UserProfile, PaymentMethodConfig, TaskItem } from '../types';
 import { storageService } from '../services/storageService';
 import { monetagService } from '../services/monetagService';
+import { exchangeRateService } from '../services/exchangeRateService';
 import { PAYMENT_METHODS, INITIAL_TASKS } from '../data/initialData';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -63,6 +64,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   const [monetagZone, setMonetagZone] = useState<string>(config.monetagZoneId || 'monetag_rewarded_inpage');
   const [monetagApiKey, setMonetagApiKey] = useState<string>(config.monetagApiKey || '');
   const [isSyncingMonetag, setIsSyncingMonetag] = useState<boolean>(false);
+  const [isSyncingExchangeRate, setIsSyncingExchangeRate] = useState<boolean>(false);
   const [admobPub, setAdmobPub] = useState<string>(config.admobPublisherId || 'ca-pub-monetization-partner');
 
   // New task form state
@@ -166,6 +168,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
     }
   };
 
+  // Sync official live exchange rate from open forex source
+  const handleSyncExchangeRate = async () => {
+    setIsSyncingExchangeRate(true);
+    try {
+      const res = await exchangeRateService.syncDailyExchangeRate(config, true);
+      if (res.updated) {
+        setUsdMznRate(res.rate);
+        onUpdateConfig({
+          ...config,
+          usdToMznRate: res.rate,
+          usdToMznLastUpdated: res.lastUpdated
+        });
+      }
+      showToast(res.message);
+    } catch (e: any) {
+      showToast(`Erro ao sincronizar câmbio: ${e.message}`);
+    } finally {
+      setIsSyncingExchangeRate(false);
+    }
+  };
+
   // Inject Real Treasury Liquidity
   const handleDepositLiquidity = async () => {
     if (depositAmount <= 0) return;
@@ -206,7 +229,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   };
 
   const handleMarkAsPaid = async (wth: WithdrawalRequest) => {
-    const txRef = txRefInput[wth.id]?.trim() || `EW-PAY-${Date.now().toString().slice(-6)}`;
+    const rawRef = txRefInput[wth.id]?.trim();
+    if (!rawRef) {
+      showToast(`Por favor insira a referência da transação ${wth.paymentMethod.toUpperCase()} (ex: código do SMS ou ID do comprovativo) antes de marcar como pago.`);
+      return;
+    }
+    const txRef = rawRef;
 
     // Note: Treasury funds were already reserved at request creation time.
     // Confirm status as 'paid' with payment provider confirmation reference.
@@ -225,8 +253,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   };
 
   const handleRejectWithdrawal = async (wth: WithdrawalRequest, reason = 'Dados de conta ou número incorretos.') => {
-    // 1. Refund points to user
-    await storageService.updateUserBalance(wth.userId, wth.pointsDeducted);
+    // 1. Refund points to user safely
+    await storageService.refundWithdrawalPoints(wth.userId, wth.pointsDeducted);
     await storageService.addTransaction({
       userId: wth.userId,
       type: 'refund',
@@ -441,13 +469,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
         <div className="p-5 rounded-2xl bg-slate-900 border border-amber-500/30 shadow-lg">
           <div className="flex items-center justify-between text-xs text-amber-400 font-bold uppercase">
             <span>Taxa USD / MZN</span>
-            <Coins className="w-4 h-4" />
+            <button
+              onClick={handleSyncExchangeRate}
+              disabled={isSyncingExchangeRate}
+              title="Atualizar taxa de câmbio agora"
+              className="text-slate-400 hover:text-amber-400 transition-colors p-1"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingExchangeRate ? 'animate-spin text-amber-400' : ''}`} />
+            </button>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-amber-400 mt-2">
-            {usdMznRate} MT / $1
+            {Number(usdMznRate).toFixed(2)} MT / $1
           </p>
           <p className="text-[11px] text-slate-400 mt-1">
-            Cotação atual para M-Pesa & e-Mola
+            Atualizado: {exchangeRateService.formatLastUpdateDate(config.usdToMznLastUpdated)}
           </p>
         </div>
 
@@ -573,6 +608,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                           <td className="p-4">
                             <p className="font-bold text-white">${w.amountUsd.toFixed(2)} USD</p>
                             <p className="text-[11px] font-bold text-emerald-400">{w.amountMzn.toFixed(2)} MT</p>
+                            {w.exchangeRateUsed && (
+                              <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
+                                Câmbio fixado: {w.exchangeRateUsed.toFixed(2)} MT/$
+                              </span>
+                            )}
                           </td>
                           <td className="p-4">
                             <span className="font-mono text-amber-300 font-bold">-{w.pointsDeducted.toLocaleString()}</span>
@@ -1064,15 +1104,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Taxa de Câmbio USD/MZN:</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300">Taxa de Câmbio USD/MZN:</label>
+                <button
+                  type="button"
+                  onClick={handleSyncExchangeRate}
+                  disabled={isSyncingExchangeRate}
+                  className="text-[10px] text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 transition-colors"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isSyncingExchangeRate ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingExchangeRate ? 'Consultando...' : 'Atualizar Câmbio'}</span>
+                </button>
+              </div>
               <input
                 type="number"
-                step="0.1"
+                step="0.01"
                 value={usdMznRate}
                 onChange={(e) => setUsdMznRate(Number(e.target.value))}
                 className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-bold text-sm"
               />
-              <p className="text-[11px] text-slate-400">1 USD = X Meticais em Moçambique</p>
+              <p className="text-[11px] text-slate-400">
+                1 USD = {Number(usdMznRate).toFixed(2)} MT • Atualizado: {exchangeRateService.formatLastUpdateDate(config.usdToMznLastUpdated)}
+              </p>
             </div>
 
             <div className="space-y-1">

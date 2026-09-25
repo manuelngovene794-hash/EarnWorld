@@ -20,6 +20,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { AppConfig, PaymentMethodId, WithdrawalRequest } from '../../types';
 import { PAYMENT_METHODS } from '../../data/initialData';
 import { storageService } from '../../services/storageService';
+import { exchangeRateService } from '../../services/exchangeRateService';
 
 interface WithdrawPageProps {
   config: AppConfig;
@@ -146,8 +147,9 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
         userName: currentUser!.displayName || currentUser!.email,
         country: userCountry,
         pointsDeducted: pointsToWithdraw,
-        amountUsd,
-        amountMzn,
+        amountUsd: Number(amountUsd.toFixed(2)),
+        amountMzn: Number(amountMzn.toFixed(2)),
+        exchangeRateUsed: usdRate,
         paymentMethod: selectedMethodId,
         accountDetails: accountSummary,
         accountName: fieldValues['name'] || fieldValues['holder'] || currentUser!.displayName || currentUser!.email,
@@ -426,7 +428,9 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
               <div>
                 <span className="text-xs text-emerald-400 font-semibold">Valor em Meticais (MZN) 🇲🇿:</span>
                 <p className="text-2xl font-black text-emerald-400">{amountMzn.toFixed(2)} MT</p>
-                <p className="text-[11px] text-slate-400">Câmbio: US$1 = {usdRate.toFixed(2)} MZN</p>
+                <p className="text-[11px] text-slate-400">
+                  Câmbio: US$1 = {usdRate.toFixed(2)} MZN • Atualizado: {exchangeRateService.formatLastUpdateDate(config.usdToMznLastUpdated)}
+                </p>
               </div>
             </div>
           </div>

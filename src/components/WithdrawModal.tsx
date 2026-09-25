@@ -16,6 +16,8 @@ import { AppConfig, PaymentMethodId, WithdrawalRequest } from '../types';
 import { PAYMENT_METHODS } from '../data/initialData';
 import { storageService } from '../services/storageService';
 
+import { exchangeRateService } from '../services/exchangeRateService';
+
 interface WithdrawModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -122,8 +124,9 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
         userName: currentUser.displayName || currentUser.email,
         country: userCountry,
         pointsDeducted: pointsToWithdraw,
-        amountUsd,
-        amountMzn,
+        amountUsd: Number(amountUsd.toFixed(2)),
+        amountMzn: Number(amountMzn.toFixed(2)),
+        exchangeRateUsed: usdRate,
         paymentMethod: selectedMethodId,
         accountDetails: accountSummary,
         accountName: fieldValues['name'] || fieldValues['holder'] || currentUser.displayName,
@@ -295,6 +298,11 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
                     <span className="text-[10px] text-emerald-400 uppercase font-semibold">Equivalente em Meticais</span>
                     <p className="text-lg font-black text-emerald-400">{amountMzn.toFixed(2)} MT</p>
                   </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] text-slate-400 px-1">
+                  <span>Taxa oficial: 1 USD = {usdRate.toFixed(2)} MZN</span>
+                  <span>Câmbio atualizado: {exchangeRateService.formatLastUpdateDate(config.usdToMznLastUpdated)}</span>
                 </div>
               </div>
 

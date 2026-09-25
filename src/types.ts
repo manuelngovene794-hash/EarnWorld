@@ -21,6 +21,8 @@ export interface UserProfile {
 
 export interface AppConfig {
   usdToMznRate: number;
+  usdToMznLastUpdated?: string;    // Timestamp of last verified exchange rate update
+  usdToMznProvider?: string;       // Exchange rate source name
   availableRealRevenueUsd: number; // Real available liquid balance to pay withdrawals
   estimatedAdRevenueUsd: number;   // Estimated pending network ad earnings (NOT available for withdrawal)
   minWithdrawalPoints: number;     // 5000 points = $5.00
@@ -70,6 +72,7 @@ export interface WithdrawalRequest {
   pointsDeducted: number;
   amountUsd: number;
   amountMzn: number;
+  exchangeRateUsed?: number;
   paymentMethod: PaymentMethodId;
   accountDetails: string;
   accountName?: string;

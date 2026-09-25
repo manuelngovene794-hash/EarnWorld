@@ -121,7 +121,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <span>•</span>
               <span className="text-slate-300">Levantamento mínimo: 5.000 pts (US$5,00)</span>
               <span>•</span>
-              <span className="text-amber-400 font-semibold">Câmbio: US$1 = {config.usdToMznRate || 64.0} MZN</span>
+              <span className="text-amber-400 font-semibold">Câmbio: US$1 = {Number(config.usdToMznRate || 63.90).toFixed(2)} MZN</span>
             </div>
           </div>
 
@@ -257,7 +257,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
               <span>Referência Visual:</span>
-              <span className="text-emerald-300 font-semibold">US$1 = {config.usdToMznRate || 64.0} MZN</span>
+              <span className="text-emerald-300 font-semibold">US$1 = {Number(config.usdToMznRate || 63.90).toFixed(2)} MZN</span>
             </div>
             <p className="text-[10px] text-slate-400 mt-1 italic">
               * A conversão exibida é apenas uma referência e não significa que existe dinheiro imediatamente disponível para pagamento sem a auditoria da plataforma.

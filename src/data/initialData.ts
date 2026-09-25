@@ -1,7 +1,9 @@
 import { AppConfig, PaymentMethodConfig, TaskItem } from '../types';
 
 export const DEFAULT_CONFIG: AppConfig = {
-  usdToMznRate: 64.0,              // 1 USD = 64.00 MZN (Admin configurable)
+  usdToMznRate: 63.90,              // 1 USD = 63.90 MZN (Verified market rate, daily updated)
+  usdToMznLastUpdated: new Date().toISOString(),
+  usdToMznProvider: 'Open Exchange Rates (open.er-api.com)',
   availableRealRevenueUsd: 0.00,   // Real liquid funds available to honor payouts (Strictly from real Monetag revenue / verified deposits)
   estimatedAdRevenueUsd: 0.00,     // Real ad network revenues
   minWithdrawalPoints: 5000,        // 5000 pts = $5.00

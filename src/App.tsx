@@ -19,6 +19,7 @@ import { AppConfig } from './types';
 import { DEFAULT_CONFIG } from './data/initialData';
 import { storageService } from './services/storageService';
 import { monetagService } from './services/monetagService';
+import { exchangeRateService } from './services/exchangeRateService';
 
 function MainApp() {
   const { currentUser } = useAuth();
@@ -72,6 +73,7 @@ function MainApp() {
     const unsubscribe = storageService.subscribeAppConfig((newCfg) => {
       setConfig(newCfg);
       monetagService.autoSyncIfConfigured(newCfg);
+      exchangeRateService.syncDailyExchangeRate(newCfg);
     });
     return () => unsubscribe();
   }, []);

@@ -165,6 +165,29 @@ export const storageService = {
     }
   },
 
+  async refundWithdrawalPoints(userId: string, pointsToRefund: number): Promise<void> {
+    try {
+      const userRef = doc(db, 'users', userId);
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(userRef);
+        if (snap.exists()) {
+          const data = snap.data() as UserProfile;
+          const currentBalance = data.pointsBalance || 0;
+          const currentWithdrawn = data.totalWithdrawnPoints || 0;
+          const newBalance = Math.max(0, currentBalance + pointsToRefund);
+          const newWithdrawn = Math.max(0, currentWithdrawn - pointsToRefund);
+          transaction.update(userRef, {
+            pointsBalance: newBalance,
+            totalWithdrawnPoints: newWithdrawn
+          });
+        }
+      });
+    } catch (e) {
+      console.error('Failed to refund user balance in firestore:', e);
+      throw e;
+    }
+  },
+
   // Record daily checkin atomically and prevent duplicates on same date
   async recordDailyCheckIn(userId: string, bonusPoints: number): Promise<{ success: boolean; newStreak: number; newBalance: number }> {
     const todayStr = new Date().toISOString().split('T')[0];
@@ -319,19 +342,31 @@ export const storageService = {
       const configRef = doc(db, 'app_config', CONFIG_DOC);
 
       await runTransaction(db, async (transaction) => {
+        let activeRate = req.exchangeRateUsed;
+
         // Atomic verification of liquidity within transaction
         const cfgSnap = await transaction.get(configRef);
-        if (cfgSnap.exists()) {
-          const liveCfg = cfgSnap.data() as AppConfig;
-          const liveLiquidity = Math.max(0, liveCfg.availableRealRevenueUsd ?? 0);
-          if (liveLiquidity < req.amountUsd) {
-            throw new Error('FUNDS_UNAVAILABLE');
-          }
-          const remainingTreasury = Math.max(0, Number((liveLiquidity - req.amountUsd).toFixed(2)));
-          transaction.update(configRef, {
-            availableRealRevenueUsd: remainingTreasury
-          });
+        const liveCfg: AppConfig = cfgSnap.exists()
+          ? ({ ...DEFAULT_CONFIG, ...cfgSnap.data() } as AppConfig)
+          : DEFAULT_CONFIG;
+
+        if (!activeRate && liveCfg.usdToMznRate) {
+          activeRate = liveCfg.usdToMznRate;
         }
+
+        const liveLiquidity = Math.max(0, liveCfg.availableRealRevenueUsd ?? 0);
+        if (liveLiquidity < req.amountUsd) {
+          throw new Error('FUNDS_UNAVAILABLE');
+        }
+
+        const remainingTreasury = Math.max(0, Number((liveLiquidity - req.amountUsd).toFixed(2)));
+        transaction.set(configRef, {
+          ...liveCfg,
+          availableRealRevenueUsd: remainingTreasury
+        }, { merge: true });
+
+        const finalRate = activeRate || 63.90;
+        const finalAmountMzn = Number((req.amountUsd * finalRate).toFixed(2));
 
         const userSnap = await transaction.get(userRef);
         if (!userSnap.exists()) {
@@ -352,7 +387,14 @@ export const storageService = {
           totalWithdrawnPoints: newWithdrawn
         });
 
-        transaction.set(wthRef, withdrawal);
+        const immutableWithdrawal: WithdrawalRequest = {
+          ...withdrawal,
+          amountUsd: req.amountUsd,
+          amountMzn: finalAmountMzn,
+          exchangeRateUsed: finalRate
+        };
+
+        transaction.set(wthRef, immutableWithdrawal);
 
         const txRecord: Transaction = {
           id: txId,
@@ -360,7 +402,7 @@ export const storageService = {
           type: 'withdrawal',
           points: -req.pointsDeducted,
           amountUsd: -(req.amountUsd),
-          description: `Levantamento via ${req.paymentMethod.toUpperCase()} (US$ ${req.amountUsd.toFixed(2)})`,
+          description: `Levantamento via ${req.paymentMethod.toUpperCase()} (US$ ${req.amountUsd.toFixed(2)} = ${finalAmountMzn.toFixed(2)} MT @ ${finalRate} MT/USD)`,
           status: 'completed',
           createdAt: new Date().toISOString()
         };
