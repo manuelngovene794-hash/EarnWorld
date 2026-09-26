@@ -153,8 +153,7 @@ export const HistorySection: React.FC = () => {
 
                   <div className="text-right sm:shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800">
                     <span className="text-base font-black text-white">${wth.amountUsd.toFixed(2)} USD</span>
-                    <p className="text-xs text-emerald-400 font-bold">{wth.amountMzn.toFixed(2)} MT</p>
-                    <p className="text-[10px] text-slate-400">-{wth.pointsDeducted.toLocaleString()} PTS</p>
+                    <p className="text-xs text-amber-400 font-bold">-{wth.pointsDeducted.toLocaleString()} PTS</p>
                   </div>
                 </div>
               );

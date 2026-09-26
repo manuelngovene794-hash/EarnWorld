@@ -20,6 +20,7 @@ export interface UserProfile {
 }
 
 export interface AppConfig {
+  paymentFundUsd: number;          // Fundo disponível para pagamentos (dinheiro real reservado pelo administrador)
   usdToMznRate: number;
   usdToMznLastUpdated?: string;    // Timestamp of last verified exchange rate update
   usdToMznProvider?: string;       // Exchange rate source name

@@ -18,7 +18,6 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppConfig } from './types';
 import { DEFAULT_CONFIG } from './data/initialData';
 import { storageService } from './services/storageService';
-import { monetagService } from './services/monetagService';
 import { exchangeRateService } from './services/exchangeRateService';
 
 function MainApp() {
@@ -68,11 +67,10 @@ function MainApp() {
     };
   }, []);
 
-  // Subscribe to real-time global config (exchange rates, liquidity balances, rules)
+  // Subscribe to real-time global config (payment funds, exchange rates, rules)
   useEffect(() => {
     const unsubscribe = storageService.subscribeAppConfig((newCfg) => {
       setConfig(newCfg);
-      monetagService.autoSyncIfConfigured(newCfg);
       exchangeRateService.syncDailyExchangeRate(newCfg);
     });
     return () => unsubscribe();
@@ -135,7 +133,7 @@ function MainApp() {
           />
         )}
 
-        {/* 4. Saldo — pontos, valor em USD/MZN e conversor */}
+        {/* 4. Saldo — pontos e valor em USD */}
         {activeTab === 'balance' && (
           <BalancePage
             config={config}
@@ -145,7 +143,7 @@ function MainApp() {
           />
         )}
 
-        {/* 5. Levantamento — M-Pesa, e-Mola, PayPal, Payoneer, USDT e banco */}
+        {/* 5. Levantamento — PayPal, Payoneer, USDT e banco */}
         {activeTab === 'withdraw' && (
           <WithdrawPage
             config={config}

@@ -28,7 +28,6 @@ import {
 } from 'lucide-react';
 import { AppConfig, WithdrawalRequest, UserProfile, PaymentMethodConfig, TaskItem } from '../types';
 import { storageService } from '../services/storageService';
-import { monetagService } from '../services/monetagService';
 import { exchangeRateService } from '../services/exchangeRateService';
 import { PAYMENT_METHODS, INITIAL_TASKS } from '../data/initialData';
 import { useAuth } from '../context/AuthContext';
@@ -53,17 +52,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   const [userSearch, setUserSearch] = useState<string>('');
 
   // Editable config fields
+  const [paymentFund, setPaymentFund] = useState<number>(
+    typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 100)
+  );
+  const [fundInput, setFundInput] = useState<number>(
+    typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 100)
+  );
   const [usdMznRate, setUsdMznRate] = useState<number>(config.usdToMznRate || 64.0);
-  const [availableRealRev, setAvailableRealRev] = useState<number>(Math.max(0, config.availableRealRevenueUsd || 0));
+  const [availableRealRev, setAvailableRealRev] = useState<number>(
+    typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 100)
+  );
   const [estimatedAdRev, setEstimatedAdRev] = useState<number>(Math.max(0, config.estimatedAdRevenueUsd || 0));
-  const [depositAmount, setDepositAmount] = useState<number>(500);
+  const [depositAmount, setDepositAmount] = useState<number>(50);
   const [minPts, setMinPts] = useState<number>(config.minWithdrawalPoints || 5000);
   const [adPts, setAdPts] = useState<number>(config.adRewardPoints || 25);
   const [refPts, setRefPts] = useState<number>(config.referralBonusPoints || 200);
   const [adProvider, setAdProvider] = useState<'monetag' | 'admob' | 'direct'>(config.adNetworkProvider || 'monetag');
   const [monetagZone, setMonetagZone] = useState<string>(config.monetagZoneId || 'monetag_rewarded_inpage');
-  const [monetagApiKey, setMonetagApiKey] = useState<string>(config.monetagApiKey || '');
-  const [isSyncingMonetag, setIsSyncingMonetag] = useState<boolean>(false);
   const [isSyncingExchangeRate, setIsSyncingExchangeRate] = useState<boolean>(false);
   const [admobPub, setAdmobPub] = useState<string>(config.admobPublisherId || 'ca-pub-monetization-partner');
 
@@ -113,59 +118,61 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
 
   useEffect(() => {
     if (config) {
-      setAvailableRealRev(Math.max(0, config.availableRealRevenueUsd || 0));
+      const fund = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
+      setPaymentFund(fund);
+      setFundInput(fund);
+      setAvailableRealRev(fund);
       setEstimatedAdRev(Math.max(0, config.estimatedAdRevenueUsd || 0));
-      if (config.monetagApiKey !== undefined) setMonetagApiKey(config.monetagApiKey);
     }
-  }, [config.availableRealRevenueUsd, config.monetagApiKey]);
+  }, [config.paymentFundUsd, config.availableRealRevenueUsd]);
 
   // Update rates & settings
   const handleSaveSettings = async () => {
     try {
+      const sanitizedFund = Math.max(0, Number(fundInput));
       const updated: AppConfig = {
         ...config,
+        paymentFundUsd: sanitizedFund,
+        availableRealRevenueUsd: sanitizedFund,
         usdToMznRate: Number(usdMznRate),
-        availableRealRevenueUsd: Math.max(0, Number(availableRealRev)),
         estimatedAdRevenueUsd: Math.max(0, Number(estimatedAdRev)),
         minWithdrawalPoints: Number(minPts),
         adRewardPoints: Number(adPts),
         referralBonusPoints: Number(refPts),
         adNetworkProvider: adProvider,
         monetagZoneId: monetagZone,
-        monetagApiKey: monetagApiKey.trim(),
         admobPublisherId: admobPub
       };
       await storageService.updateAppConfig(updated);
       onUpdateConfig(updated);
-      showToast('Configurações e rede de monetização salvas com sucesso!');
+      setPaymentFund(sanitizedFund);
+      setAvailableRealRev(sanitizedFund);
+      showToast('Configurações e Fundo de Pagamentos salvos com sucesso!');
     } catch (e) {
       console.error(e);
     }
   };
 
-  // Sync real live revenue from Monetag API
-  const handleSyncMonetag = async () => {
-    setIsSyncingMonetag(true);
-    try {
-      const currentConf: AppConfig = {
-        ...config,
-        monetagApiKey: monetagApiKey.trim()
-      };
-      const result = await monetagService.syncRealRevenue(currentConf);
-      if (result.synced) {
-        setAvailableRealRev(result.balanceUsd);
-        onUpdateConfig({
-          ...config,
-          availableRealRevenueUsd: result.balanceUsd,
-          monetagApiKey: monetagApiKey.trim()
-        });
-      }
-      showToast(result.message);
-    } catch (err: any) {
-      showToast(`Erro ao sincronizar com a Monetag: ${err.message}`);
-    } finally {
-      setIsSyncingMonetag(false);
-    }
+  // Direct Update to "Fundo disponível para pagamentos"
+  const handleSavePaymentFund = async (val: number) => {
+    const sanitized = Math.max(0, Number(val.toFixed(2)));
+    const updated: AppConfig = {
+      ...config,
+      paymentFundUsd: sanitized,
+      availableRealRevenueUsd: sanitized
+    };
+    await storageService.updateAppConfig(updated);
+    onUpdateConfig(updated);
+    setPaymentFund(sanitized);
+    setFundInput(sanitized);
+    setAvailableRealRev(sanitized);
+    showToast(`Fundo disponível para pagamentos atualizado para US$ ${sanitized.toFixed(2)}!`);
+  };
+
+  const handleAddPaymentFund = async (amountToAdd: number) => {
+    const current = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
+    const updatedTotal = Math.max(0, Number((current + amountToAdd).toFixed(2)));
+    await handleSavePaymentFund(updatedTotal);
   };
 
   // Sync official live exchange rate from open forex source
@@ -189,46 +196,61 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
     }
   };
 
-  // Inject Real Treasury Liquidity
-  const handleDepositLiquidity = async () => {
-    if (depositAmount <= 0) return;
-    const newAvailable = Math.max(0, availableRealRev + depositAmount);
-    setAvailableRealRev(newAvailable);
-    const updated: AppConfig = {
-      ...config,
-      availableRealRevenueUsd: newAvailable
-    };
-    await storageService.updateAppConfig(updated);
-    onUpdateConfig(updated);
-    showToast(`Adicionados US$ ${depositAmount} à reserva real de liquidez disponível!`);
-    setDepositAmount(100);
-  };
-
-  // Process Withdrawal Actions
+  // Process Withdrawal Actions: "Cada saque aprovado deve diminuir o fundo disponível pelo valor pago."
+  // "Nunca aprovar pagamentos acima do fundo disponível."
+  // "Impedir pagamentos repetidos."
   const handleApproveWithdrawal = async (wth: WithdrawalRequest) => {
-    if (config.availableRealRevenueUsd < wth.amountUsd) {
-      alert('Aguardando receita disponível para pagamento: O fundo real de liquidez é menor que este levantamento. É proibido criar dinheiro fictício. Adicione fundos reais antes de aprovar.');
+    if (wth.status === 'approved' || wth.status === 'paid') {
+      alert('Este pedido já foi aprovado ou pago anteriormente. Pagamentos repetidos são bloqueados.');
+      return;
+    }
+    if (wth.status === 'rejected') {
+      alert('Este pedido foi rejeitado e não pode ser aprovado.');
+      return;
+    }
+
+    const currentFund = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
+    if (currentFund < wth.amountUsd) {
+      alert(`Fundo insuficiente: O "Fundo disponível para pagamentos" possui US$ ${currentFund.toFixed(2)}, mas este levantamento exige US$ ${wth.amountUsd.toFixed(2)}. Nunca é permitido aprovar pagamentos acima do fundo disponível. Adicione mais fundos no painel antes de aprovar.`);
       return;
     }
 
     try {
-      const updatedWth: WithdrawalRequest = {
-        ...wth,
-        status: 'approved',
-        statusMessage: 'Aprovado pelo administrador. Pagamento em processamento.',
-        updatedAt: new Date().toISOString()
+      const result = await storageService.approveWithdrawal(wth.id);
+      const updatedCfg: AppConfig = {
+        ...config,
+        paymentFundUsd: result.newFund,
+        availableRealRevenueUsd: result.newFund
       };
-      await storageService.updateWithdrawal(updatedWth);
+      onUpdateConfig(updatedCfg);
+      setPaymentFund(result.newFund);
+      setFundInput(result.newFund);
+      setAvailableRealRev(result.newFund);
 
-      const updatedList = withdrawals.map(w => w.id === wth.id ? updatedWth : w);
+      const updatedList = withdrawals.map(w => w.id === wth.id ? result.withdrawal : w);
       setWithdrawals(updatedList);
-      showToast(`Levantamento ${wth.id} aprovado com sucesso!`);
-    } catch (e) {
-      console.error(e);
+      showToast(`Levantamento ${wth.id} aprovado com sucesso! Fundo restante: US$ ${result.newFund.toFixed(2)}`);
+    } catch (e: any) {
+      alert(e.message || 'Erro ao aprovar levantamento.');
     }
   };
 
   const handleMarkAsPaid = async (wth: WithdrawalRequest) => {
+    if (wth.status === 'paid') {
+      alert('Este pedido já foi liquidado e pago anteriormente. Pagamentos repetidos são bloqueados.');
+      return;
+    }
+    if (wth.status === 'rejected') {
+      alert('Este pedido foi rejeitado e não pode ser marcado como pago.');
+      return;
+    }
+
+    const currentFund = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
+    if (wth.status === 'pending' && currentFund < wth.amountUsd) {
+      alert(`Fundo insuficiente: O "Fundo disponível para pagamentos" possui US$ ${currentFund.toFixed(2)}, mas este levantamento exige US$ ${wth.amountUsd.toFixed(2)}. Nunca é permitido pagar valores acima do fundo disponível.`);
+      return;
+    }
+
     const rawRef = txRefInput[wth.id]?.trim();
     if (!rawRef) {
       showToast(`Por favor insira a referência da transação ${wth.paymentMethod.toUpperCase()} (ex: código do SMS ou ID do comprovativo) antes de marcar como pago.`);
@@ -236,56 +258,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
     }
     const txRef = rawRef;
 
-    // Note: Treasury funds were already reserved at request creation time.
-    // Confirm status as 'paid' with payment provider confirmation reference.
-    const updatedWth: WithdrawalRequest = {
-      ...wth,
-      status: 'paid',
-      statusMessage: `Pago com sucesso via ${wth.paymentMethod.toUpperCase()}. Ref: ${txRef}`,
-      txReference: txRef,
-      updatedAt: new Date().toISOString()
-    };
-    await storageService.updateWithdrawal(updatedWth);
+    try {
+      const result = await storageService.markWithdrawalAsPaid(wth.id, txRef);
+      const updatedCfg: AppConfig = {
+        ...config,
+        paymentFundUsd: result.newFund,
+        availableRealRevenueUsd: result.newFund
+      };
+      onUpdateConfig(updatedCfg);
+      setPaymentFund(result.newFund);
+      setFundInput(result.newFund);
+      setAvailableRealRev(result.newFund);
 
-    const updatedList = withdrawals.map(w => w.id === wth.id ? updatedWth : w);
-    setWithdrawals(updatedList);
-    showToast(`Levantamento ${wth.id} liquidado com sucesso! Ref: ${txRef}`);
+      const updatedList = withdrawals.map(w => w.id === wth.id ? result.withdrawal : w);
+      setWithdrawals(updatedList);
+      showToast(`Levantamento ${wth.id} liquidado com sucesso! Fundo restante: US$ ${result.newFund.toFixed(2)}`);
+    } catch (e: any) {
+      alert(e.message || 'Erro ao processar pagamento.');
+    }
   };
 
   const handleRejectWithdrawal = async (wth: WithdrawalRequest, reason = 'Dados de conta ou número incorretos.') => {
-    // 1. Refund points to user safely
-    await storageService.refundWithdrawalPoints(wth.userId, wth.pointsDeducted);
-    await storageService.addTransaction({
-      userId: wth.userId,
-      type: 'refund',
-      points: wth.pointsDeducted,
-      amountUsd: wth.amountUsd,
-      description: `Reembolso de Levantamento Rejeitado: ${reason}`,
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    });
-
-    // 2. Return reserved funds back to treasury available balance
-    const restoredRevenue = Math.max(0, Number(((config.availableRealRevenueUsd || 0) + wth.amountUsd).toFixed(2)));
-    setAvailableRealRev(restoredRevenue);
-    const updatedCfg: AppConfig = {
-      ...config,
-      availableRealRevenueUsd: restoredRevenue
-    };
-    await storageService.updateAppConfig(updatedCfg);
-    onUpdateConfig(updatedCfg);
-
-    const updatedWth: WithdrawalRequest = {
-      ...wth,
-      status: 'rejected',
-      statusMessage: `Rejeitado: ${reason}. Os seus pontos foram reembolsados na totalidade.`,
-      updatedAt: new Date().toISOString()
-    };
-    await storageService.updateWithdrawal(updatedWth);
-
-    const updatedList = withdrawals.map(w => w.id === wth.id ? updatedWth : w);
-    setWithdrawals(updatedList);
-    showToast(`Levantamento ${wth.id} rejeitado e pontos reembolsados.`);
+    try {
+      const result = await storageService.rejectWithdrawal(wth.id, reason);
+      if (result.restoredFund !== undefined) {
+        const updatedCfg: AppConfig = {
+          ...config,
+          paymentFundUsd: result.restoredFund,
+          availableRealRevenueUsd: result.restoredFund
+        };
+        onUpdateConfig(updatedCfg);
+        setPaymentFund(result.restoredFund);
+        setFundInput(result.restoredFund);
+        setAvailableRealRev(result.restoredFund);
+      }
+      const updatedList = withdrawals.map(w => w.id === wth.id ? result.withdrawal : w);
+      setWithdrawals(updatedList);
+      showToast(`Levantamento ${wth.id} rejeitado. Pontos devolvidos ao utilizador.`);
+    } catch (e: any) {
+      alert(e.message || 'Erro ao rejeitar levantamento.');
+    }
   };
 
   const handleMarkWaitingLiquidity = async (wth: WithdrawalRequest) => {
@@ -398,6 +410,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   const totalCirculatingUsd = totalCirculatingPoints / (config.pointsPerDollar || 1000);
   const pendingWithdrawalsCount = withdrawals.filter(w => w.status === 'pending').length;
 
+  const isAdmin = currentUser?.role === 'admin' || 
+                  currentUser?.email?.toLowerCase() === 'manuelngovene794@gmail.com' || 
+                  currentUser?.email?.toLowerCase() === 'admin@earnworld.com';
+
+  if (!isAdmin) {
+    return (
+      <div className="rounded-3xl bg-slate-900 border border-rose-500/40 p-8 sm:p-12 text-center max-w-lg mx-auto my-12 shadow-2xl space-y-4">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h2 className="text-2xl font-black text-white">Acesso Restrito ao Administrador</h2>
+        <p className="text-xs text-slate-300 leading-relaxed">
+          Apenas o administrador autorizado pode aceder a esta área e gerir o <strong>Fundo disponível para pagamentos</strong>.
+        </p>
+        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400">
+          Sessão atual: <strong className="text-amber-400">{currentUser?.email || 'Nenhuma (Visitante)'}</strong>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-300">
       
@@ -437,17 +470,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
       {/* KPI Financial Overview Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
-        {/* KPI 1: Real Liquid Revenue Available */}
+        {/* KPI 1: Fundo Disponível para Pagamentos */}
         <div className="p-5 rounded-2xl bg-slate-900 border border-emerald-500/40 shadow-lg">
           <div className="flex items-center justify-between text-xs text-emerald-400 font-bold uppercase">
-            <span>{t('admin.revenue_available')}</span>
+            <span>Fundo disponível para pagamentos</span>
             <DollarSign className="w-4 h-4" />
           </div>
           <p className="text-2xl sm:text-3xl font-black text-white mt-2">
-            US$ {availableRealRev.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            US$ {paymentFund.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
           <p className="text-[11px] text-emerald-400/90 mt-1 font-medium">
-            ✓ Saldo real para pagar levantamentos
+            {paymentFund <= 0 
+              ? '⚠️ Fundo zerado — saques bloqueados' 
+              : '✓ Dinheiro real reservado pelo admin'}
           </p>
         </div>
 
@@ -465,24 +500,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
           </p>
         </div>
 
-        {/* KPI 3: USD / MZN Exchange Rate */}
+        {/* KPI 3: Total Registos */}
         <div className="p-5 rounded-2xl bg-slate-900 border border-amber-500/30 shadow-lg">
           <div className="flex items-center justify-between text-xs text-amber-400 font-bold uppercase">
-            <span>Taxa USD / MZN</span>
-            <button
-              onClick={handleSyncExchangeRate}
-              disabled={isSyncingExchangeRate}
-              title="Atualizar taxa de câmbio agora"
-              className="text-slate-400 hover:text-amber-400 transition-colors p-1"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingExchangeRate ? 'animate-spin text-amber-400' : ''}`} />
-            </button>
+            <span>Utilizadores Registados</span>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-amber-400 mt-2">
-            {Number(usdMznRate).toFixed(2)} MT / $1
+            {users.length}
           </p>
           <p className="text-[11px] text-slate-400 mt-1">
-            Atualizado: {exchangeRateService.formatLastUpdateDate(config.usdToMznLastUpdated)}
+            Global • Todos os países
           </p>
         </div>
 
@@ -509,7 +536,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
           { id: 'users', label: `${t('admin.users_tab')} (${users.length})`, icon: Users },
           { id: 'tasks', label: `Tarefas & Recompensas (${tasks.length})`, icon: ListTodo },
           { id: 'methods', label: `Métodos de Pagamento (${paymentMethods.length})`, icon: CreditCard },
-          { id: 'revenue', label: 'Gestão de Liquidez', icon: DollarSign },
+          { id: 'revenue', label: 'Fundo de Pagamentos', icon: DollarSign },
           { id: 'settings', label: t('admin.config_tab'), icon: Settings },
           { id: 'fraud', label: t('admin.fraud_tab'), icon: ShieldAlert },
         ].map(item => {
@@ -560,7 +587,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                   <tr>
                     <th className="p-4">Utilizador / País</th>
                     <th className="p-4">Método & Conta</th>
-                    <th className="p-4">Valor (USD / MZN)</th>
+                    <th className="p-4">Valor (USD)</th>
                     <th className="p-4">Pontos</th>
                     <th className="p-4">Estado</th>
                     <th className="p-4 text-right">Ações</th>
@@ -607,12 +634,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                           </td>
                           <td className="p-4">
                             <p className="font-bold text-white">${w.amountUsd.toFixed(2)} USD</p>
-                            <p className="text-[11px] font-bold text-emerald-400">{w.amountMzn.toFixed(2)} MT</p>
-                            {w.exchangeRateUsed && (
-                              <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
-                                Câmbio fixado: {w.exchangeRateUsed.toFixed(2)} MT/$
-                              </span>
-                            )}
                           </td>
                           <td className="p-4">
                             <span className="font-mono text-amber-300 font-bold">-{w.pointsDeducted.toLocaleString()}</span>
@@ -652,7 +673,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                                   )}
                                   <button
                                     onClick={() => handleApproveWithdrawal(w)}
-                                    className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px]"
+                                    disabled={paymentFund < w.amountUsd}
+                                    title={paymentFund < w.amountUsd ? `Fundo insuficiente (US$ ${paymentFund.toFixed(2)} disponível, US$ ${w.amountUsd.toFixed(2)} necessário)` : 'Aprovar levantamento'}
+                                    className={`px-2.5 py-1 rounded font-bold text-[11px] transition-colors ${
+                                      paymentFund < w.amountUsd
+                                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                                        : 'bg-blue-600 hover:bg-blue-500 text-white shadow'
+                                    }`}
                                   >
                                     {t('admin.approve')}
                                   </button>
@@ -670,14 +697,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                               <div className="flex items-center justify-end gap-1.5">
                                 <input
                                   type="text"
-                                  placeholder="Ref. M-Pesa / Tx ID..."
+                                  placeholder="Ref. Transação / Tx ID..."
                                   value={txRefInput[w.id] || ''}
                                   onChange={(e) => setTxRefInput(prev => ({ ...prev, [w.id]: e.target.value }))}
                                   className="w-32 px-2 py-1 rounded bg-slate-950 border border-slate-700 text-white text-[10px] font-mono focus:border-amber-400 focus:outline-none"
                                 />
                                 <button
                                   onClick={() => handleMarkAsPaid(w)}
-                                  className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow whitespace-nowrap"
+                                  disabled={w.status === 'pending' && paymentFund < w.amountUsd}
+                                  title={w.status === 'pending' && paymentFund < w.amountUsd ? 'Fundo insuficiente' : 'Marcar como pago'}
+                                  className={`px-2.5 py-1 rounded font-bold text-[11px] shadow whitespace-nowrap transition-colors ${
+                                    w.status === 'pending' && paymentFund < w.amountUsd
+                                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                                      : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                  }`}
                                 >
                                   {t('admin.mark_paid')}
                                 </button>
@@ -1044,51 +1077,118 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
       {/* TAB 3: REVENUE & LIQUIDITY MANAGEMENT */}
       {activeTab === 'revenue' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-emerald-400" />
-              <span>Injeção de Liquidez Real (Depósito do Administrador)</span>
-            </h3>
+          <div className="p-6 rounded-2xl bg-slate-900 border border-emerald-500/40 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-emerald-400" />
+                <span>Fundo disponível para pagamentos</span>
+              </h3>
+              <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
+                paymentFund > 0 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+              }`}>
+                {paymentFund > 0 ? `Ativo: US$ ${paymentFund.toFixed(2)}` : 'Zerado / Bloqueado'}
+              </span>
+            </div>
+
             <p className="text-xs text-slate-300 leading-relaxed">
-              O EarnWorld opera sob a regra de ouro: nenhum pagamento é autorizado sem fundos reais disponíveis.
-              Quando a empresa recebe transferências das redes de anúncios (Google AdMob, Unity, parceiros) ou patrocinadores diretos, o saldo é creditado aqui para liberar os levantamentos de Moçambique e mundiais.
+              Esse valor representa o dinheiro que o administrador realmente reservou para pagar os usuários e <strong>NÃO</strong> deve ser tratado como saldo automático da Monetag.
             </p>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400">Montante em USD a Adicionar:</label>
+            <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+              <label className="text-xs font-bold text-slate-300">Definir Fundo Disponível para Pagamentos (US$):</label>
               <div className="flex gap-2">
-                <input
-                  type="number"
-                  value={depositAmount}
-                  onChange={(e) => setDepositAmount(Number(e.target.value))}
-                  className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white font-bold text-base focus:border-amber-400 focus:outline-none"
-                />
+                <div className="relative flex-1">
+                  <span className="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">US$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={fundInput}
+                    onChange={(e) => setFundInput(Number(e.target.value))}
+                    className="w-full pl-12 pr-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-emerald-400 font-bold text-lg focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
                 <button
-                  onClick={handleDepositLiquidity}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors"
+                  onClick={() => handleSavePaymentFund(fundInput)}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-lg shadow-emerald-600/20 shrink-0"
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>{t('admin.treasury_deposit')}</span>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Salvar Fundo</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Actions */}
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[11px] text-slate-400 font-medium">Ajustes rápidos de reserva:</span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleAddPaymentFund(20)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 font-bold text-xs"
+                >
+                  +US$ 20
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddPaymentFund(50)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 font-bold text-xs"
+                >
+                  +US$ 50
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddPaymentFund(100)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 font-bold text-xs"
+                >
+                  +US$ 100
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddPaymentFund(250)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 font-bold text-xs"
+                >
+                  +US$ 250
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSavePaymentFund(0)}
+                  className="px-3 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 font-bold text-xs border border-rose-800/50"
+                  title="Testar bloqueio de saques quando o fundo chegar a zero"
+                >
+                  Zerar Fundo ($0.00)
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Revenue Separation Box */}
-          <div className="p-6 rounded-2xl bg-slate-900 border border-amber-500/30 space-y-4">
+          {/* Rules & Policy Box */}
+          <div className="p-6 rounded-2xl bg-slate-900 border border-amber-500/30 space-y-4 shadow-xl">
             <h3 className="text-base font-bold text-amber-300 flex items-center gap-2">
               <ShieldAlert className="w-5 h-5" />
-              <span>Regra Anti-Fictícia de Receita</span>
+              <span>Regras Oficiais de Levantamento</span>
             </h3>
             <div className="space-y-3 text-xs text-slate-300">
-              <p>
-                <strong className="text-white">Receita Real Disponível:</strong> US$ {availableRealRev.toFixed(2)} <br />
-                <span className="text-slate-400">Saldo bancário/cripto real e auditado apto a pagar pedidos imediatamente.</span>
-              </p>
-              <p>
-                <strong className="text-white">Receita Estimada de Anúncios:</strong> US$ {estimatedAdRev.toFixed(2)} <br />
-                <span className="text-slate-400">Projeção estatística de impressões pendentes de pagamento das redes de anúncios. NÃO pode ser usada para liquidar pedidos antes da liquidação real.</span>
-              </p>
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
+                <strong className="text-amber-400 block mb-1">1. Regra de 3 Dias do Cadastro:</strong>
+                <span className="text-slate-400">
+                  Os utilizadores só podem solicitar o primeiro saque após 3 dias da criação da sua conta. Depois dos 3 dias, não existe nova espera: o utilizador pode sacar novamente sempre que tiver pontos suficientes e houver fundo disponível.
+                </span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
+                <strong className="text-amber-400 block mb-1">2. Dedução em Cada Saque Aprovado:</strong>
+                <span className="text-slate-400">
+                  Cada saque aprovado pelo administrador diminui automaticamente o "Fundo disponível para pagamentos" pelo valor pago.
+                </span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
+                <strong className="text-rose-400 block mb-1">3. Bloqueio Quando Fundo = 0:</strong>
+                <span className="text-slate-400">
+                  Quando o fundo chegar a zero, novos saques são bloqueados imediatamente e o sistema exibe: <em>“Levantamentos temporariamente indisponíveis — aguarde novos fundos”</em>.
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -1099,32 +1199,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
         <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5 max-w-2xl">
           <h3 className="text-base font-bold text-white flex items-center gap-2">
             <Settings className="w-5 h-5 text-amber-400" />
-            <span>Configurações Gerais & Cotação USD / MZN</span>
+            <span>Configurações Gerais da Plataforma</span>
           </h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-300">Taxa de Câmbio USD/MZN:</label>
-                <button
-                  type="button"
-                  onClick={handleSyncExchangeRate}
-                  disabled={isSyncingExchangeRate}
-                  className="text-[10px] text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 transition-colors"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isSyncingExchangeRate ? 'animate-spin' : ''}`} />
-                  <span>{isSyncingExchangeRate ? 'Consultando...' : 'Atualizar Câmbio'}</span>
-                </button>
-              </div>
+              <label className="text-xs font-semibold text-slate-300">Fundo disponível para pagamentos (US$):</label>
               <input
                 type="number"
                 step="0.01"
-                value={usdMznRate}
-                onChange={(e) => setUsdMznRate(Number(e.target.value))}
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-bold text-sm"
+                min="0"
+                value={fundInput}
+                onChange={(e) => setFundInput(Number(e.target.value))}
+                className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-emerald-400 font-bold text-sm"
               />
               <p className="text-[11px] text-slate-400">
-                1 USD = {Number(usdMznRate).toFixed(2)} MT • Atualizado: {exchangeRateService.formatLastUpdateDate(config.usdToMznLastUpdated)}
+                Dinheiro real reservado pelo administrador para pagamentos aos utilizadores.
               </p>
             </div>
 
@@ -1202,46 +1292,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
               </div>
             </div>
 
-            {/* Monetag Real Revenue API Integration */}
-            <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/20 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
-                    <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Integração de Receita Real Monetag (API)</span>
-                  </h5>
-                  <p className="text-[11px] text-slate-400">
-                    Insira a sua chave de API da Monetag para sincronizar a receita real líquida e liberar saques automaticamente.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSyncMonetag}
-                  disabled={isSyncingMonetag}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingMonetag ? 'animate-spin' : ''}`} />
-                  <span>{isSyncingMonetag ? 'A sincronizar...' : 'Sincronizar Monetag'}</span>
-                </button>
+            {/* Fundo de Pagamentos Transparency Notice */}
+            <div className="p-4 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-2">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                <DollarSign className="w-4 h-4 shrink-0" />
+                <span>Gestão Oficial do Fundo Disponível para Pagamentos</span>
               </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-slate-300">
-                  Chave de API Monetag (Bearer Token):
-                </label>
-                <input
-                  type="password"
-                  value={monetagApiKey}
-                  onChange={(e) => setMonetagApiKey(e.target.value)}
-                  placeholder="Cole aqui a sua chave de API gerada no painel da Monetag"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:border-amber-400 focus:outline-none"
-                />
-                {config.monetagLastSync && (
-                  <p className="text-[10px] text-slate-500">
-                    Última sincronização: {new Date(config.monetagLastSync).toLocaleString('pt-PT')}
-                  </p>
-                )}
-              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                O valor reservado para pagamento de saques (atualmente <strong className="text-emerald-400">US$ {paymentFund.toFixed(2)}</strong>) é gerido exclusivamente pelo administrador e <strong>NÃO</strong> depende de integrações automáticas. Para adicionar fundos ou zerar a reserva, utilize a aba dedicada <strong>“Fundo de Pagamentos”</strong>.
+              </p>
             </div>
           </div>
 

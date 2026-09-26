@@ -45,7 +45,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const points = currentUser?.pointsBalance || 0;
   const approxUsd = (points / (config.pointsPerDollar || 1000)).toFixed(2);
-  const approxMzn = ((points / (config.pointsPerDollar || 1000)) * (config.usdToMznRate || 64)).toFixed(2);
   const minPoints = config.minWithdrawalPoints || 5000;
   const progressToMin = Math.min(100, Math.round((points / minPoints) * 100));
 
@@ -110,7 +109,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             
             <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
               Complete pesquisas, ofertas, assista a anúncios voluntários e convide amigos.
-              Levante através de <strong className="text-amber-300">M-Pesa</strong>, <strong className="text-amber-300">e-Mola</strong>, <strong className="text-amber-300">PayPal</strong>, <strong className="text-amber-300">USDT</strong> ou banco.
+              Levante através de <strong className="text-amber-300">PayPal</strong>, <strong className="text-amber-300">Payoneer</strong>, <strong className="text-amber-300">USDT</strong> ou <strong className="text-amber-300">Transferência Bancária</strong>.
             </p>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1 text-xs text-slate-400">
@@ -121,7 +120,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <span>•</span>
               <span className="text-slate-300">Levantamento mínimo: 5.000 pts (US$5,00)</span>
               <span>•</span>
-              <span className="text-amber-400 font-semibold">Câmbio: US$1 = {Number(config.usdToMznRate || 63.90).toFixed(2)} MZN</span>
+              <span className="text-amber-400 font-semibold">Regra de Saque: 3 dias após o registo</span>
             </div>
           </div>
 
@@ -163,7 +162,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <span className="text-slate-300">{t('points.disclaimer')}</span>
           </p>
           <div className="text-slate-400 text-[11px]">
-            Plataforma 100% Gratuita • Recompensas Reais em MZN & USD
+            Plataforma 100% Gratuita • Recompensas Reais em USD & Cripto
           </div>
         </div>
       </div>
@@ -232,15 +231,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
 
-          {/* Card 3: Approx MZN (Moçambique) */}
+          {/* Card 3: Métodos de Levantamento */}
           <div 
             onClick={() => setActiveTab('withdraw')}
             className="rounded-2xl bg-gradient-to-br from-slate-900 to-emerald-950/20 border border-emerald-500/30 p-5 shadow-lg relative cursor-pointer hover:border-emerald-400 transition-all"
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
-                <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Moçambique (MZN)</span>
-                <span className="text-sm">🇲🇿</span>
+                <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Pagamentos Globais</span>
+                <span className="text-sm">🌐</span>
               </div>
               <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400">
                 <Wallet className="w-4 h-4" />
@@ -248,19 +247,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="mt-3">
               <div className="flex items-baseline gap-1.5">
-                <span className="text-3xl font-black text-emerald-400">{approxMzn}</span>
-                <span className="text-xs font-bold text-emerald-300">MT</span>
+                <span className="text-2xl font-black text-emerald-400">PayPal & USDT</span>
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                M-Pesa & e-Mola disponíveis
+                Payoneer e Banco também disponíveis
               </p>
             </div>
             <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-              <span>Referência Visual:</span>
-              <span className="text-emerald-300 font-semibold">US$1 = {Number(config.usdToMznRate || 63.90).toFixed(2)} MZN</span>
+              <span>Levantamento:</span>
+              <span className="text-emerald-300 font-semibold">A partir de US$ 5,00</span>
             </div>
-            <p className="text-[10px] text-slate-400 mt-1 italic">
-              * A conversão exibida é apenas uma referência e não significa que existe dinheiro imediatamente disponível para pagamento sem a auditoria da plataforma.
+            <p className="text-[10px] text-slate-400 mt-1">
+              Disponível após 3 dias da criação da conta com saldo suficiente.
             </p>
           </div>
 

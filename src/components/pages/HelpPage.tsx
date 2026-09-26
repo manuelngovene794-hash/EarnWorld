@@ -29,7 +29,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ config, setActiveTab }) => {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(0);
   const [supportName, setSupportName] = useState(currentUser?.displayName || '');
   const [supportEmail, setSupportEmail] = useState(currentUser?.email || '');
-  const [supportSubject, setSupportSubject] = useState('Levantamento M-Pesa / e-Mola');
+  const [supportSubject, setSupportSubject] = useState('Levantamento (PayPal / USDT / Banco)');
   const [supportMessage, setSupportMessage] = useState('');
   const [ticketSent, setTicketSent] = useState(false);
   const [sending, setSending] = useState(false);
@@ -37,19 +37,19 @@ export const HelpPage: React.FC<HelpPageProps> = ({ config, setActiveTab }) => {
   const faqs = [
     {
       q: '1. Como funcionam os pontos e quanto valem em dinheiro?',
-      a: `No EarnWorld, a conversão é transparente e fixa: 1.000 pontos equivalem a exatamente US$ 1,00. Mostramos também o valor aproximado em Meticais (MZN) usando a taxa de câmbio oficial configurada pelo administrador (atualmente 1 USD = ${config.usdToMznRate || 64.0} MZN). Os pontos são recompensas internas atribuídas após a conclusão voluntária de pesquisas, ofertas ou visualização de anúncios.`
+      a: 'No EarnWorld, a conversão é transparente e fixa: 1.000 pontos equivalem a exatamente US$ 1,00. Os pontos são recompensas internas atribuídas após a conclusão voluntária de pesquisas, ofertas ou visualização de anúncios.'
     },
     {
-      q: '2. Como funcionam os levantamentos em Moçambique por M-Pesa e e-Mola?',
-      a: 'Os utilizadores residentes em Moçambique podem solicitar levantamentos diretos para as suas carteiras móveis Vodacom M-Pesa (números que iniciam com 84 ou 85) ou Movitel e-Mola (números 86 ou 87). Os pagamentos são transferidos em Meticais (MT) sem necessidade de conta bancária tradicional.'
+      q: '2. Quais são os métodos de levantamento disponíveis?',
+      a: 'Os pagamentos são efetuados via PayPal, Payoneer, USDT (criptomoeda na rede TRC-20 ou BEP-20) e Transferência Bancária Internacional. Todos os utilizadores em qualquer país têm acesso a estes métodos.'
     },
     {
-      q: '3. Qual é o valor mínimo de levantamento?',
-      a: 'O levantamento mínimo no EarnWorld é de 5.000 pontos, que correspondem a exatamente US$ 5,00 (aproximadamente 320 MT). Assim que a sua conta atingir este saldo, a opção de levantamento fica totalmente disponível.'
+      q: '3. Qual é a regra dos 3 dias e valor mínimo de levantamento?',
+      a: 'O levantamento mínimo é de 5.000 pontos (US$ 5,00). Por motivos de segurança e prevenção anti-fraude, novos utilizadores podem solicitar o primeiro saque após 3 dias da criação da conta. Depois dos 3 dias, pode sacar sempre que tiver saldo suficiente e houver fundos disponíveis.'
     },
     {
-      q: '4. Quais são os prazos de processamento dos levantamentos?',
-      a: 'Os levantamentos via M-Pesa e e-Mola em Moçambique são normalmente validados e enviados dentro de 1 a 48 horas úteis após a aprovação da equipa. Métodos como USDT, PayPal e transferência bancária seguem o mesmo ciclo após a validação das atividades da conta.'
+      q: '4. E se não houver fundos disponíveis no momento do levantamento?',
+      a: 'O EarnWorld paga exclusivamente com fundos reais provenientes de anunciantes e parceiros. Caso a reserva de liquidez esteja temporariamente em confirmação, os seus pontos e saldo permanecem 100% seguros na sua conta, e o saque aguarda a disponibilidade de novos fundos.'
     },
     {
       q: '5. Como funcionam os anúncios recompensados e as regras antifraude?',
@@ -61,7 +61,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ config, setActiveTab }) => {
     },
     {
       q: '7. Como posso acompanhar o estado do meu levantamento?',
-      a: 'Após o envio do pedido, a transação entra no estado "Pendente" e pode ser acompanhada na página Histórico. Assim que for confirmada e enviada para o seu número M-Pesa, e-Mola ou carteira, o estado muda para "Pago" com a respetiva referência de liquidação.'
+      a: 'Após o envio do pedido, a transação entra no estado "Pendente" e pode ser acompanhada na página Histórico. Assim que for confirmada e enviada, o estado muda para "Pago" com a respetiva referência de liquidação.'
     },
     {
       q: '8. Como convidar amigos e receber os pontos de bónus?',
@@ -96,7 +96,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ config, setActiveTab }) => {
               Perguntas Frequentes & <span className="bg-gradient-to-r from-amber-400 to-yellow-300 bg-clip-text text-transparent">Suporte</span>
             </h1>
             <p className="text-sm text-slate-300 mt-1 max-w-2xl leading-relaxed">
-              Tire todas as suas dúvidas sobre pontuação, levantamentos M-Pesa/e-Mola, regras de anúncios e fale diretamente com a nossa equipa.
+              Tire todas as suas dúvidas sobre pontuação, métodos de pagamento, regra de 3 dias e fale diretamente com a nossa equipa.
             </p>
           </div>
         </div>
@@ -202,7 +202,8 @@ export const HelpPage: React.FC<HelpPageProps> = ({ config, setActiveTab }) => {
                 onChange={(e) => setSupportSubject(e.target.value)}
                 className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm outline-none focus:border-amber-400 transition-colors cursor-pointer"
               >
-                <option value="Levantamento M-Pesa / e-Mola">Dúvida sobre Levantamento M-Pesa / e-Mola</option>
+                <option value="Levantamento (PayPal / USDT / Banco)">Dúvida sobre Levantamentos (PayPal, USDT, Banco)</option>
+                <option value="Regra de 3 Dias para Saque">Dúvida sobre Regra de 3 Dias</option>
                 <option value="Validação de Tarefas ou Pesquisas">Validação de Tarefas ou Pesquisas</option>
                 <option value="Anúncios Recompensados">Anúncios Recompensados & Pontos</option>
                 <option value="Problema com Código de Convite">Problema com Código de Convite</option>

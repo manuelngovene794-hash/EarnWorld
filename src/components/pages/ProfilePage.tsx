@@ -173,7 +173,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               />
               <Phone className="w-4 h-4 text-slate-400 absolute right-3 top-3" />
             </div>
-            <p className="text-[11px] text-slate-400">Usado para receber pagamentos e notificações via M-Pesa / e-Mola.</p>
+            <p className="text-[11px] text-slate-400">Usado para receber notificações e contacto.</p>
           </div>
 
           {/* Country Selection */}
@@ -184,14 +184,14 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               onChange={(e) => setCountry(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm outline-none focus:border-amber-400 transition-colors cursor-pointer"
             >
-              <option value="MZ">🇲🇿 Moçambique (M-Pesa & e-Mola)</option>
+              <option value="MZ">🇲🇿 Moçambique</option>
               {COUNTRIES.filter(c => c.code !== 'MZ').map((c) => (
                 <option key={c.code} value={c.code}>
                   {c.flag} {c.namePt} ({c.dialCode})
                 </option>
               ))}
             </select>
-            <p className="text-[11px] text-slate-400">Os métodos de levantamento dependem do país selecionado.</p>
+            <p className="text-[11px] text-slate-400">Todos os países possuem acesso aos métodos globais de saque.</p>
           </div>
 
         </div>

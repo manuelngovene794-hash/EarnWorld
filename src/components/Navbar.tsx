@@ -45,15 +45,14 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const points = currentUser?.pointsBalance || 0;
   const approxUsd = (points / (config.pointsPerDollar || 1000)).toFixed(2);
-  const approxMzn = ((points / (config.pointsPerDollar || 1000)) * (config.usdToMznRate || 64)).toFixed(2);
 
   // The 8 official pages requested by the user
   const pagesList = [
     { id: 'dashboard', num: '1', label: t('nav.dashboard') || 'Início', desc: 'Visão geral e saldo', icon: LayoutDashboard },
     { id: 'earn', num: '2', label: t('nav.earn') || 'Ganhar Pontos', desc: 'Pesquisas, ofertas, anúncios e check-in', icon: Coins, badge: 'Popular' },
     { id: 'referrals', num: '3', label: t('nav.referrals') || 'Indicar Amigos', desc: 'Código e link de convite (+200 pts)', icon: Users, badge: '+200 pts' },
-    { id: 'balance', num: '4', label: t('nav.balance') || 'Saldo', desc: 'Pontos, valor USD/MZN e conversor', icon: TrendingUp },
-    { id: 'withdraw', num: '5', label: t('nav.withdraw') || 'Levantamento', desc: 'M-Pesa, e-Mola, PayPal, USDT, Banco', icon: Wallet },
+    { id: 'balance', num: '4', label: t('nav.balance') || 'Saldo', desc: 'Pontos acumulados e carteira em USD', icon: TrendingUp },
+    { id: 'withdraw', num: '5', label: t('nav.withdraw') || 'Levantamento', desc: 'PayPal, Payoneer, USDT, Transferência', icon: Wallet },
     { id: 'history', num: '6', label: t('nav.history') || 'Histórico', desc: 'Ganhos e levantamentos', icon: Clock },
     { id: 'profile', num: '7', label: t('nav.profile') || 'Perfil / Definições', desc: 'Dados, país e idioma', icon: User },
     { id: 'help', num: '8', label: t('nav.help') || 'Ajuda & Suporte', desc: 'Perguntas frequentes e apoio', icon: HelpCircle },
@@ -199,10 +198,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                       <span className="font-bold text-amber-400 text-sm">{points.toLocaleString()}</span>
                       <span className="text-[10px] text-amber-200/80 font-semibold uppercase">PTS</span>
                     </div>
-                    <div className="text-[11px] text-slate-400 leading-none">
-                      <span>${approxUsd}</span>
-                      <span className="text-amber-500/60 mx-1">•</span>
-                      <span className="text-emerald-400 font-semibold">{approxMzn} MT</span>
+                    <div className="text-[11px] text-slate-300 font-semibold leading-none">
+                      <span>${approxUsd} USD</span>
                     </div>
                   </div>
                 </div>
@@ -346,8 +343,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-white font-bold">${approxUsd} USD</p>
-                  <p className="text-xs text-emerald-400 font-bold">{approxMzn} MZN</p>
+                  <p className="text-xs text-amber-400 font-bold">${approxUsd} USD</p>
                 </div>
               </div>
             )}

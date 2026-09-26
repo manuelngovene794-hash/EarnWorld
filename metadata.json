@@ -1,6 +1,6 @@
 {
   "name": "EarnWorld – Global Rewards",
-  "description": "Plataforma global de recompensas transparentes e seguras, com suporte para Moçambique (M-Pesa, e-Mola) e internacional.",
+  "description": "Plataforma global de recompensas transparentes e seguras, com resgates via PayPal, Payoneer, USDT e Transferência Bancária.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -66,12 +66,12 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               </li>
               <li>
                 <button onClick={() => handleLink('balance')} className="hover:text-amber-300 transition-colors">
-                  4. Saldo & Conversor (USD / MZN)
+                  4. Saldo & Carteira (USD)
                 </button>
               </li>
               <li>
                 <button onClick={() => handleLink('withdraw')} className="hover:text-amber-300 transition-colors">
-                  5. Levantamento (M-Pesa, e-Mola, USDT)
+                  5. Levantamento (PayPal, Payoneer, USDT, Banco)
                 </button>
               </li>
               <li>

@@ -1,10 +1,11 @@
 import { AppConfig, PaymentMethodConfig, TaskItem } from '../types';
 
 export const DEFAULT_CONFIG: AppConfig = {
+  paymentFundUsd: 100.00,          // Fundo disponível para pagamentos (dinheiro real reservado pelo administrador)
   usdToMznRate: 63.90,              // 1 USD = 63.90 MZN (Verified market rate, daily updated)
   usdToMznLastUpdated: new Date().toISOString(),
   usdToMznProvider: 'Open Exchange Rates (open.er-api.com)',
-  availableRealRevenueUsd: 0.00,   // Real liquid funds available to honor payouts (Strictly from real Monetag revenue / verified deposits)
+  availableRealRevenueUsd: 100.00, // Sincronizado com paymentFundUsd
   estimatedAdRevenueUsd: 0.00,     // Real ad network revenues
   minWithdrawalPoints: 5000,        // 5000 pts = $5.00
   pointsPerDollar: 1000,            // 1000 pts = $1.00
@@ -19,62 +20,6 @@ export const DEFAULT_CONFIG: AppConfig = {
 };
 
 export const PAYMENT_METHODS: PaymentMethodConfig[] = [
-  {
-    id: 'mpesa',
-    name: 'M-Pesa (Moçambique)',
-    descriptionPt: 'Levantamento direto para carteira móvel Vodacom M-Pesa em Meticais (MT).',
-    descriptionEn: 'Direct payout to your Vodacom M-Pesa mobile wallet in Mozambican Meticais (MZN).',
-    minUsd: 5,
-    supportedCountries: ['MZ'],
-    currencyTarget: 'MZN',
-    fields: [
-      {
-        id: 'phone',
-        labelPt: 'Número M-Pesa (Vodacom)',
-        labelEn: 'M-Pesa Phone Number',
-        placeholder: '84XXXXXXX ou 85XXXXXXX',
-        type: 'tel',
-        pattern: '^[8][45][0-9]{7}$',
-        helpTextPt: 'Insira o número de 9 dígitos Vodacom registado no seu M-Pesa.',
-        helpTextEn: 'Enter your 9-digit Vodacom mobile number registered on M-Pesa.'
-      },
-      {
-        id: 'name',
-        labelPt: 'Nome Titular da Conta',
-        labelEn: 'Account Holder Full Name',
-        placeholder: 'Ex: Manuel António',
-        type: 'text'
-      }
-    ]
-  },
-  {
-    id: 'emola',
-    name: 'e-Mola (Moçambique)',
-    descriptionPt: 'Levantamento direto para carteira móvel Movitel e-Mola em Meticais (MT).',
-    descriptionEn: 'Direct payout to your Movitel e-Mola mobile wallet in Mozambican Meticais (MZN).',
-    minUsd: 5,
-    supportedCountries: ['MZ'],
-    currencyTarget: 'MZN',
-    fields: [
-      {
-        id: 'phone',
-        labelPt: 'Número e-Mola (Movitel)',
-        labelEn: 'e-Mola Phone Number',
-        placeholder: '86XXXXXXX ou 87XXXXXXX',
-        type: 'tel',
-        pattern: '^[8][67][0-9]{7}$',
-        helpTextPt: 'Insira o número de 9 dígitos Movitel registado no seu e-Mola.',
-        helpTextEn: 'Enter your 9-digit Movitel mobile number registered on e-Mola.'
-      },
-      {
-        id: 'name',
-        labelPt: 'Nome Titular da Conta',
-        labelEn: 'Account Holder Full Name',
-        placeholder: 'Ex: Amélia Sitoe',
-        type: 'text'
-      }
-    ]
-  },
   {
     id: 'paypal',
     name: 'PayPal (Global)',
@@ -143,17 +88,17 @@ export const PAYMENT_METHODS: PaymentMethodConfig[] = [
   {
     id: 'bank',
     name: 'Transferência Bancária',
-    descriptionPt: 'Transferência direta para bancos em Moçambique (BCI, BIM, Standard, Moza) ou internacionais.',
-    descriptionEn: 'Direct transfer to local banks in Mozambique (BCI, BIM, Standard Bank) or international IBAN.',
+    descriptionPt: 'Transferência bancária direta (IBAN / Conta) em USD.',
+    descriptionEn: 'Direct bank transfer (IBAN / Account Number) in USD.',
     minUsd: 10,
     supportedCountries: ['*'],
-    currencyTarget: 'MZN',
+    currencyTarget: 'USD',
     fields: [
       {
         id: 'bankName',
         labelPt: 'Nome do Banco',
         labelEn: 'Bank Name',
-        placeholder: 'Ex: Millennium BIM, BCI, Standard Bank Moçambique',
+        placeholder: 'Ex: Millennium BIM, BCI, Standard Bank, Santander, Chase',
         type: 'text'
       },
       {
