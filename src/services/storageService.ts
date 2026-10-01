@@ -1,4 +1,4 @@
-import { AppConfig, TaskItem, WithdrawalRequest, Transaction, UserProfile } from '../types';
+import { AppConfig, TaskItem, WithdrawalRequest, Transaction, UserProfile, UserTaskSession, TaskCompletionRecord } from '../types';
 import { DEFAULT_CONFIG, INITIAL_TASKS } from '../data/initialData';
 
 // Local storage helper functions for reliable, domain-independent browser persistence
@@ -202,6 +202,205 @@ export const storageService = {
     const tasks = await this.getTasks();
     const filtered = tasks.filter(t => t.id !== taskId);
     setLocal('earnworld_tasks_db', filtered);
+  },
+
+  // Real Task Session, Duration Validation & Anti-Duplicate System
+  async getUserTaskSessions(userId: string): Promise<Record<string, UserTaskSession>> {
+    const allSessions = getLocal<Record<string, UserTaskSession>>('earnworld_task_sessions_db', {});
+    const userSessions: Record<string, UserTaskSession> = {};
+    for (const [key, session] of Object.entries(allSessions)) {
+      if (session.userId === userId) {
+        userSessions[session.taskId] = session;
+      }
+    }
+    return userSessions;
+  },
+
+  async getTaskSession(userId: string, taskId: string): Promise<UserTaskSession | null> {
+    const allSessions = getLocal<Record<string, UserTaskSession>>('earnworld_task_sessions_db', {});
+    return allSessions[`${userId}_${taskId}`] || null;
+  },
+
+  async getCompletedTaskIds(userId: string): Promise<string[]> {
+    const completedMap = getLocal<Record<string, TaskCompletionRecord[]>>('earnworld_completed_tasks_db', {});
+    const records = completedMap[userId] || [];
+    return records.map(r => r.taskId);
+  },
+
+  async isTaskCompleted(userId: string, taskId: string): Promise<boolean> {
+    const completedIds = await this.getCompletedTaskIds(userId);
+    return completedIds.includes(taskId);
+  },
+
+  // Start a task: Points are NEVER added at start. Real session is initiated with required duration.
+  async startTaskSession(userId: string, taskId: string): Promise<UserTaskSession> {
+    const user = await this.getUserProfile(userId);
+    if (!user) {
+      throw new Error('Utilizador não autenticado.');
+    }
+
+    const tasks = await this.getTasks();
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) {
+      throw new Error('Tarefa não encontrada.');
+    }
+
+    // 1. Prevent duplicate credits: check if already completed
+    const alreadyCompleted = await this.isTaskCompleted(userId, taskId);
+    if (alreadyCompleted) {
+      throw new Error('Esta tarefa já foi concluída e os pontos já foram creditados anteriormente. Créditos duplicados são proibidos.');
+    }
+
+    const allSessions = getLocal<Record<string, UserTaskSession>>('earnworld_task_sessions_db', {});
+    const sessionKey = `${userId}_${taskId}`;
+    const existing = allSessions[sessionKey];
+
+    // If already in progress and not expired, return existing session
+    if (existing && existing.status === 'in_progress') {
+      return existing;
+    }
+
+    // Duration in seconds: (estimatedMinutes * 60)
+    // E.g., 12 minutes = 720 seconds
+    const minutes = Math.max(1, task.estimatedMinutes || 1);
+    const requiredDurationSeconds = minutes * 60;
+    const startedAt = new Date().toISOString();
+    const eligibleAt = new Date(Date.now() + requiredDurationSeconds * 1000).toISOString();
+
+    const newSession: UserTaskSession = {
+      id: `ts_${userId}_${taskId}_${Date.now()}`,
+      userId,
+      taskId,
+      taskTitle: task.titlePt || task.title,
+      rewardPoints: task.rewardPoints,
+      requiredDurationSeconds,
+      startedAt,
+      eligibleAt,
+      status: 'in_progress',
+      credited: false
+    };
+
+    allSessions[sessionKey] = newSession;
+    setLocal('earnworld_task_sessions_db', allSessions);
+
+    // CRITICAL: Notice that NO points are credited to the user here!
+    return newSession;
+  },
+
+  // Validate real completion: checks duration, anti-duplicate, and credits points ONLY on success
+  async validateAndCompleteTask(
+    userId: string, 
+    taskId: string, 
+    userAnswers?: Record<string, string>
+  ): Promise<{ success: boolean; pointsAwarded: number; newBalance: number; session: UserTaskSession }> {
+    const user = await this.getUserProfile(userId);
+    if (!user) {
+      throw new Error('Utilizador não encontrado no sistema.');
+    }
+
+    const tasks = await this.getTasks();
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) {
+      throw new Error('Tarefa não encontrada.');
+    }
+
+    // 1. RULE: Prevent duplicate credit
+    const alreadyCompleted = await this.isTaskCompleted(userId, taskId);
+    if (alreadyCompleted) {
+      throw new Error('Esta tarefa já foi concluída anteriormente. Créditos duplicados são estritamente proibidos.');
+    }
+
+    // 2. RULE: Active session verification
+    const allSessions = getLocal<Record<string, UserTaskSession>>('earnworld_task_sessions_db', {});
+    const sessionKey = `${userId}_${taskId}`;
+    const session = allSessions[sessionKey];
+
+    if (!session || session.status !== 'in_progress') {
+      throw new Error('Nenhuma sessão ativa encontrada para esta tarefa. É necessário iniciar a tarefa primeiro.');
+    }
+
+    if (session.credited) {
+      throw new Error('Os pontos desta tarefa já foram creditados anteriormente.');
+    }
+
+    // 3. RULE: Real duration condition validation
+    // E.g. If the task requires 12 minutes, user MUST have elapsed the full 12 minutes
+    const startTimeMs = new Date(session.startedAt).getTime();
+    const elapsedSeconds = Math.floor((Date.now() - startTimeMs) / 1000);
+
+    if (elapsedSeconds < session.requiredDurationSeconds) {
+      const remainingSeconds = session.requiredDurationSeconds - elapsedSeconds;
+      const mins = Math.floor(remainingSeconds / 60);
+      const secs = remainingSeconds % 60;
+      const timeStr = mins > 0 ? `${mins} minuto(s) e ${secs} segundo(s)` : `${secs} segundo(s)`;
+      throw new Error(
+        `Condição não cumprida: Esta tarefa exige a permanência e dedicação de ${task.estimatedMinutes} minutos. Restam ainda ${timeStr} para a validação real ser liberada.`
+      );
+    }
+
+    // 4. ATOMIC CREDITING: All conditions met!
+    // A. Mark session as completed and credited
+    const completedAt = new Date().toISOString();
+    session.status = 'completed';
+    session.credited = true;
+    session.completedAt = completedAt;
+    if (userAnswers) {
+      session.userAnswers = userAnswers;
+    }
+    allSessions[sessionKey] = session;
+    setLocal('earnworld_task_sessions_db', allSessions);
+
+    // B. Record in completed tasks register (Anti-duplicate lock)
+    const completedMap = getLocal<Record<string, TaskCompletionRecord[]>>('earnworld_completed_tasks_db', {});
+    const userCompleted = completedMap[userId] || [];
+    userCompleted.push({
+      id: 'comp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      userId,
+      taskId,
+      taskTitle: task.titlePt || task.title,
+      rewardPoints: task.rewardPoints,
+      completedAt,
+      durationSecondsSpent: elapsedSeconds
+    });
+    completedMap[userId] = userCompleted;
+    setLocal('earnworld_completed_tasks_db', completedMap);
+
+    // C. Update user points balance ONLY now after successful completion
+    const newBalance = (user.pointsBalance || 0) + task.rewardPoints;
+    const newEarned = (user.totalEarnedPoints || 0) + task.rewardPoints;
+    const updatedUser: UserProfile = {
+      ...user,
+      pointsBalance: newBalance,
+      totalEarnedPoints: newEarned
+    };
+    await this.saveUserProfile(updatedUser);
+
+    // D. Record transaction ledger
+    await this.addTransaction({
+      userId,
+      type: task.category === 'survey' ? 'survey' : 'offer',
+      points: task.rewardPoints,
+      amountUsd: Number((task.rewardPoints / 1000).toFixed(2)),
+      description: `Conclusão real validada: ${task.titlePt} (${task.partner})`,
+      status: 'completed',
+      createdAt: completedAt
+    });
+
+    return {
+      success: true,
+      pointsAwarded: task.rewardPoints,
+      newBalance,
+      session
+    };
+  },
+
+  async abandonTaskSession(userId: string, taskId: string): Promise<void> {
+    const allSessions = getLocal<Record<string, UserTaskSession>>('earnworld_task_sessions_db', {});
+    const sessionKey = `${userId}_${taskId}`;
+    if (allSessions[sessionKey]) {
+      delete allSessions[sessionKey];
+      setLocal('earnworld_task_sessions_db', allSessions);
+    }
   },
 
   // Withdrawals

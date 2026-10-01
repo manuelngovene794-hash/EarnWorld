@@ -13,12 +13,16 @@ import {
   ExternalLink,
   ChevronRight,
   TrendingUp,
-  X
+  X,
+  Lock,
+  Hourglass,
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { AppConfig, TaskItem } from '../../types';
+import { AppConfig, TaskItem, UserTaskSession } from '../../types';
 import { storageService } from '../../services/storageService';
 import { INITIAL_TASKS } from '../../data/initialData';
 
@@ -35,7 +39,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
   onOpenAuth,
   setActiveTab
 }) => {
-  const { currentUser, updatePoints, claimCheckIn } = useAuth();
+  const { currentUser, refreshProfile, claimCheckIn } = useAuth();
   const { t } = useLanguage();
 
   const [tasks, setTasks] = useState<TaskItem[]>(INITIAL_TASKS);
@@ -45,12 +49,61 @@ export const EarnPage: React.FC<EarnPageProps> = ({
   const [completionSuccess, setCompletionSuccess] = useState(false);
   const [claimingCheckin, setClaimingCheckin] = useState(false);
 
+  // Real task tracking & anti-duplicate state
+  const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
+  const [userTaskSessions, setUserTaskSessions] = useState<Record<string, UserTaskSession>>({});
+  const [activeSession, setActiveSession] = useState<UserTaskSession | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
+  const [taskErrorMessage, setTaskErrorMessage] = useState<string>('');
+  const [surveyResponse, setSurveyResponse] = useState<string>('');
+  const [isStartingTask, setIsStartingTask] = useState<boolean>(false);
+
   // Ad cooldown
   const [adCooldown, setAdCooldown] = useState(0);
 
   useEffect(() => {
     storageService.getTasks().then(setTasks);
   }, []);
+
+  const loadUserTaskData = async () => {
+    if (currentUser) {
+      try {
+        const [completed, sessions] = await Promise.all([
+          storageService.getCompletedTaskIds(currentUser.id),
+          storageService.getUserTaskSessions(currentUser.id)
+        ]);
+        setCompletedTaskIds(completed);
+        setUserTaskSessions(sessions);
+      } catch (e) {
+        console.error('Erro ao carregar sessões de tarefas:', e);
+      }
+    } else {
+      setCompletedTaskIds([]);
+      setUserTaskSessions({});
+    }
+  };
+
+  useEffect(() => {
+    loadUserTaskData();
+  }, [currentUser]);
+
+  // Live timer for active session
+  useEffect(() => {
+    if (!activeSession || activeSession.status !== 'in_progress') {
+      return;
+    }
+
+    const updateTimer = () => {
+      const startMs = new Date(activeSession.startedAt).getTime();
+      const elapsed = Math.floor((Date.now() - startMs) / 1000);
+      const rem = Math.max(0, activeSession.requiredDurationSeconds - elapsed);
+      setRemainingSeconds(rem);
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [activeSession]);
 
   // Daily Checkin info
   const todayStr = new Date().toISOString().split('T')[0];
@@ -82,25 +135,67 @@ export const EarnPage: React.FC<EarnPageProps> = ({
     }
   };
 
-  const handleOpenTaskModal = (task: TaskItem) => {
+  const handleOpenTaskModal = async (task: TaskItem) => {
     if (!currentUser) {
       onOpenAuth();
       return;
     }
     setSelectedTask(task);
     setCompletionSuccess(false);
+    setTaskErrorMessage('');
+    setSurveyResponse('');
+
+    // Check if task session already exists
+    const session = await storageService.getTaskSession(currentUser.id, task.id);
+    setActiveSession(session);
+    if (session && session.status === 'in_progress') {
+      const startMs = new Date(session.startedAt).getTime();
+      const elapsed = Math.floor((Date.now() - startMs) / 1000);
+      setRemainingSeconds(Math.max(0, session.requiredDurationSeconds - elapsed));
+    } else {
+      setRemainingSeconds((task.estimatedMinutes || 1) * 60);
+    }
   };
 
+  // 1. START TASK: Never awards points upon starting! Creates a real session with timestamp.
+  const handleStartTask = async () => {
+    if (!selectedTask || !currentUser) return;
+    setIsStartingTask(true);
+    setTaskErrorMessage('');
+
+    try {
+      const session = await storageService.startTaskSession(currentUser.id, selectedTask.id);
+      setActiveSession(session);
+      setUserTaskSessions(prev => ({ ...prev, [selectedTask.id]: session }));
+      setRemainingSeconds(session.requiredDurationSeconds);
+    } catch (e: any) {
+      setTaskErrorMessage(e.message || 'Erro ao iniciar a tarefa.');
+    } finally {
+      setIsStartingTask(false);
+    }
+  };
+
+  // 2. VALIDATE & COMPLETE TASK: Only credits points if duration condition is satisfied and task not duplicate
   const handleConfirmTaskCompletion = async () => {
     if (!selectedTask || !currentUser) return;
     setIsCompleting(true);
+    setTaskErrorMessage('');
 
     try {
-      await updatePoints(
-        selectedTask.rewardPoints,
-        `Conclusão: ${selectedTask.titlePt} (${selectedTask.partner})`,
-        selectedTask.category === 'survey' ? 'survey' : 'offer'
+      const userAnswers: Record<string, string> = {};
+      if (surveyResponse) {
+        userAnswers['opinion'] = surveyResponse;
+      }
+
+      const result = await storageService.validateAndCompleteTask(
+        currentUser.id,
+        selectedTask.id,
+        userAnswers
       );
+
+      // Refresh real profile balance
+      await refreshProfile();
+      await loadUserTaskData();
 
       confetti({
         particleCount: 80,
@@ -110,10 +205,26 @@ export const EarnPage: React.FC<EarnPageProps> = ({
       });
 
       setCompletionSuccess(true);
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      setTaskErrorMessage(e.message || 'Erro na validação da tarefa.');
     } finally {
       setIsCompleting(false);
+    }
+  };
+
+  const handleAbandonTask = async () => {
+    if (!selectedTask || !currentUser) return;
+    try {
+      await storageService.abandonTaskSession(currentUser.id, selectedTask.id);
+      setActiveSession(null);
+      setUserTaskSessions(prev => {
+        const copy = { ...prev };
+        delete copy[selectedTask.id];
+        return copy;
+      });
+      setSelectedTask(null);
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -347,24 +458,43 @@ export const EarnPage: React.FC<EarnPageProps> = ({
           {filteredTasks.map((task) => {
             const approxUsd = (task.rewardPoints / (config.pointsPerDollar || 1000)).toFixed(2);
             const approxMzn = (Number(approxUsd) * (config.usdToMznRate || 64)).toFixed(0);
+            const isCompleted = completedTaskIds.includes(task.id);
+            const session = userTaskSessions[task.id];
+            const isInProgress = session && session.status === 'in_progress';
 
             return (
               <div
                 key={task.id}
                 onClick={() => handleOpenTaskModal(task)}
-                className="p-5 rounded-2xl bg-slate-900 border border-slate-800 hover:border-amber-500/50 cursor-pointer transition-all hover:scale-[1.01] flex flex-col justify-between group shadow-lg"
+                className={`p-5 rounded-2xl border cursor-pointer transition-all flex flex-col justify-between group shadow-lg ${
+                  isCompleted
+                    ? 'bg-slate-900/60 border-emerald-500/30 hover:border-emerald-500/50'
+                    : isInProgress
+                    ? 'bg-slate-900 border-amber-500/50 hover:border-amber-400'
+                    : 'bg-slate-900 border-slate-800 hover:border-amber-500/50 hover:scale-[1.01]'
+                }`}
               >
                 <div>
                   <div className="flex items-start justify-between gap-3 mb-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
                         {task.category === 'survey' ? 'Pesquisa' : task.category === 'offer' ? 'Oferta' : 'Especial'}
                       </span>
-                      {task.badge && (
+                      {isCompleted ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>Concluída</span>
+                        </span>
+                      ) : isInProgress ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1 animate-pulse">
+                          <Clock className="w-3 h-3" />
+                          <span>Em Progresso</span>
+                        </span>
+                      ) : task.badge ? (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
                           {task.badge}
                         </span>
-                      )}
+                      ) : null}
                     </div>
                     <div className="text-right">
                       <span className="text-base font-black text-amber-400">+{task.rewardPoints} PTS</span>
@@ -389,10 +519,22 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                     </span>
                   </div>
 
-                  <button className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-300 group-hover:bg-amber-500 group-hover:text-slate-950 font-bold text-xs flex items-center gap-1 transition-colors">
-                    <span>Iniciar</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                  {isCompleted ? (
+                    <span className="px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 font-bold text-xs flex items-center gap-1 border border-emerald-500/30">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Concluída</span>
+                    </span>
+                  ) : isInProgress ? (
+                    <button className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs flex items-center gap-1 shadow-md shadow-amber-500/20">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Continuar</span>
+                    </button>
+                  ) : (
+                    <button className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-300 group-hover:bg-amber-500 group-hover:text-slate-950 font-bold text-xs flex items-center gap-1 transition-colors">
+                      <span>Iniciar ({task.estimatedMinutes} min)</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -400,18 +542,75 @@ export const EarnPage: React.FC<EarnPageProps> = ({
         </div>
       </div>
 
-      {/* Interactive Task Completion Modal */}
+      {/* Interactive Real Task Completion Modal */}
       {selectedTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-amber-500/30 p-6 shadow-2xl relative text-left">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in overflow-y-auto">
+          <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-amber-500/30 p-6 shadow-2xl relative text-left my-8">
             <button
               onClick={() => setSelectedTask(null)}
-              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
 
-            {!completionSuccess ? (
+            {completedTaskIds.includes(selectedTask.id) ? (
+              /* Already Completed State (Anti-Duplicate) */
+              <div className="text-center py-6 space-y-4">
+                <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto border border-emerald-500/40">
+                  <CheckCircle2 className="w-10 h-10" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-white">Tarefa Já Concluída!</h3>
+                  <p className="text-sm text-slate-300 mt-2 leading-relaxed">
+                    Você já concluiu esta tarefa e recebeu <strong className="text-amber-400">+{selectedTask.rewardPoints} pontos</strong>.
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Para garantir a conformidade e integridade da plataforma, créditos duplicados são proibidos.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSelectedTask(null)}
+                  className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-sm transition-colors"
+                >
+                  Fechar
+                </button>
+              </div>
+            ) : completionSuccess ? (
+              /* Success State */
+              <div className="text-center py-6 space-y-4">
+                <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto border border-emerald-500/40 animate-bounce">
+                  <CheckCircle2 className="w-10 h-10" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-white">Tarefa Validada com Sucesso!</h3>
+                  <p className="text-sm text-slate-300 mt-1">
+                    Condição de permanência cumprida! Foram creditados <strong className="text-amber-400">+{selectedTask.rewardPoints} pontos</strong> ao seu saldo.
+                  </p>
+                  <p className="text-xs text-emerald-400 mt-1 font-semibold">
+                    Equivalente a US$ {(selectedTask.rewardPoints / 1000).toFixed(2)} ({((selectedTask.rewardPoints / 1000) * (config.usdToMznRate || 64)).toFixed(2)} MT)
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-center gap-3 pt-2">
+                  <button
+                    onClick={() => setSelectedTask(null)}
+                    className="px-6 py-2.5 rounded-xl bg-slate-800 text-slate-200 font-bold text-sm hover:bg-slate-700 transition-colors"
+                  >
+                    Continuar a Ganhar
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedTask(null);
+                      setActiveTab('balance');
+                    }}
+                    className="px-6 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-black text-sm hover:bg-amber-400 transition-colors"
+                  >
+                    Ver no Saldo
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* In Progress / Pre-Start State */
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
                   <span className="text-xs px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-300 font-bold uppercase">
@@ -423,6 +622,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                 <h3 className="text-xl font-bold text-white">{selectedTask.titlePt}</h3>
                 <p className="text-sm text-slate-300 leading-relaxed">{selectedTask.descriptionPt}</p>
 
+                {/* Task Details Summary */}
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-400">Recompensa:</span>
@@ -433,77 +633,191 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                     <span className="text-white font-semibold">US$ {(selectedTask.rewardPoints / 1000).toFixed(2)}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">Valor em Meticais:</span>
-                    <span className="text-emerald-400 font-semibold">{((selectedTask.rewardPoints / 1000) * (config.usdToMznRate || 64)).toFixed(2)} MT</span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">Tempo Estimado:</span>
-                    <span className="text-slate-300">{selectedTask.estimatedMinutes} minutos</span>
+                    <span className="text-slate-400">Tempo Exigido de Permanência:</span>
+                    <span className="text-amber-300 font-bold flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5" />
+                      {selectedTask.estimatedMinutes} minutos completos
+                    </span>
                   </div>
                 </div>
 
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-start gap-2">
-                  <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <span>
-                    Responda honestamente para garantir a validação pelo parceiro <strong>{selectedTask.partner}</strong>. Os pontos são atribuídos imediatamente.
-                  </span>
-                </div>
+                {/* Real Condition Notice */}
+                {(!activeSession || activeSession.status !== 'in_progress') ? (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 text-xs text-slate-300 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-amber-400 font-bold">
+                      <ShieldCheck className="w-4 h-4 shrink-0" />
+                      <span>Condição Real de Cumprimento:</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Os pontos <strong>NÃO são adicionados ao iniciar a tarefa</strong>. Só serão creditados após você cumprir os <strong>{selectedTask.estimatedMinutes} minutos</strong> de permanência ativa e responder às etapas do patrocinador.
+                    </p>
+                  </div>
+                ) : (
+                  /* Active Session Countdown Timer */
+                  <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/40 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Clock className={`w-5 h-5 ${remainingSeconds === 0 ? 'text-emerald-400' : 'text-amber-400 animate-spin'}`} />
+                        <span className="text-xs font-bold text-white uppercase tracking-wider">
+                          {remainingSeconds === 0 ? 'Tempo Exigido Cumprido!' : 'Temporizador da Tarefa em Andamento'}
+                        </span>
+                      </div>
+                      <span className={`font-mono text-xl font-black ${remainingSeconds === 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {String(Math.floor(remainingSeconds / 60)).padStart(2, '0')}:
+                        {String(remainingSeconds % 60).padStart(2, '0')}
+                      </span>
+                    </div>
 
-                <div className="flex items-center gap-3 pt-2">
-                  <button
-                    onClick={() => setSelectedTask(null)}
-                    className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={handleConfirmTaskCompletion}
-                    disabled={isCompleting}
-                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-sm hover:from-amber-400 hover:to-yellow-300 shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
-                  >
-                    {isCompleting ? (
-                      <span>A validar tarefa...</span>
+                    {/* Progress Bar */}
+                    <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                      <div 
+                        className={`h-full transition-all duration-1000 ${
+                          remainingSeconds === 0 ? 'bg-emerald-500' : 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                        }`}
+                        style={{
+                          width: `${Math.min(100, Math.max(0, ((activeSession.requiredDurationSeconds - remainingSeconds) / activeSession.requiredDurationSeconds) * 100))}%`
+                        }}
+                      />
+                    </div>
+
+                    <p className="text-[11px] text-slate-400 leading-tight">
+                      {remainingSeconds > 0
+                        ? `Aguarde a conclusão dos ${selectedTask.estimatedMinutes} minutos para desbloquear a validação real dos pontos.`
+                        : `Condição de permanência cumprida! Você pode agora validar e creditar os pontos.`}
+                    </p>
+                  </div>
+                )}
+
+                {/* Interactive Activity (Survey / Offer steps) */}
+                {activeSession && activeSession.status === 'in_progress' && (
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wide">
+                      Etapa de Validação ({selectedTask.category === 'survey' ? 'Questionário' : 'Instruções do Patrocinador'})
+                    </span>
+
+                    {selectedTask.category === 'survey' ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-slate-200 font-medium">
+                          Qual é a sua principal avaliação sobre o uso de serviços e pagamentos digitais móveis no dia a dia?
+                        </p>
+                        {[
+                          'Utilizo quase diariamente para serviços, compras e recargas.',
+                          'Utilizo semanalmente e considero seguro e confiável.',
+                          'Utilizo ocasionalmente, preferindo opções com menores taxas.'
+                        ].map((opt) => (
+                          <label 
+                            key={opt} 
+                            className={`flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer text-xs transition-colors ${
+                              surveyResponse === opt 
+                                ? 'bg-amber-500/15 border-amber-500/60 text-amber-200' 
+                                : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            <input 
+                              type="radio" 
+                              name="earn_survey_response" 
+                              checked={surveyResponse === opt}
+                              onChange={() => setSurveyResponse(opt)}
+                              className="accent-amber-500 mt-0.5" 
+                            />
+                            <span>{opt}</span>
+                          </label>
+                        ))}
+                      </div>
                     ) : (
-                      <>
-                        <Sparkles className="w-4 h-4" />
-                        <span>Concluir e Receber</span>
-                      </>
+                      <div className="space-y-2 text-xs text-slate-300">
+                        <p className="text-slate-200 font-medium">Etapas da oferta ({selectedTask.partner}):</p>
+                        <ol className="list-decimal pl-4 space-y-1 text-slate-400 text-[11px]">
+                          <li>Visite a plataforma do patrocinador e realize o procedimento gratuito.</li>
+                          <li>Mantenha a atividade aberta durante o tempo estipulado.</li>
+                          <li>Ao zerar o cronômetro, clique em validar para receber os pontos.</li>
+                        </ol>
+                      </div>
                     )}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-6 space-y-4">
-                <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-10 h-10" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-white">Parabéns!</h3>
-                  <p className="text-sm text-slate-300 mt-1">
-                    Ganhou com sucesso <strong className="text-amber-400">+{selectedTask.rewardPoints} pontos</strong>!
-                  </p>
-                  <p className="text-xs text-emerald-400 mt-1">
-                    Equivalente a US$ {(selectedTask.rewardPoints / 1000).toFixed(2)} ({((selectedTask.rewardPoints / 1000) * (config.usdToMznRate || 64)).toFixed(2)} MT)
-                  </p>
+                  </div>
+                )}
+
+                {/* Error Banner */}
+                {taskErrorMessage && (
+                  <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                    <span>{taskErrorMessage}</span>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="pt-2">
+                  {!activeSession || activeSession.status !== 'in_progress' ? (
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setSelectedTask(null)}
+                        className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={handleStartTask}
+                        disabled={isStartingTask}
+                        className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-sm hover:from-amber-400 hover:to-yellow-300 shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all active:scale-95"
+                      >
+                        {isStartingTask ? (
+                          <span>A iniciar...</span>
+                        ) : (
+                          <>
+                            <Clock className="w-4 h-4" />
+                            <span>Iniciar Tarefa ({selectedTask.estimatedMinutes} min)</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <button
+                        onClick={handleConfirmTaskCompletion}
+                        disabled={isCompleting || remainingSeconds > 0 || (selectedTask.category === 'survey' && !surveyResponse)}
+                        className={`w-full py-3.5 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${
+                          remainingSeconds > 0 || (selectedTask.category === 'survey' && !surveyResponse)
+                            ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                            : 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 hover:from-emerald-400 hover:to-teal-300 shadow-xl shadow-emerald-500/20 active:scale-95'
+                        }`}
+                      >
+                        {isCompleting ? (
+                          <span>A validar conclusão...</span>
+                        ) : remainingSeconds > 0 ? (
+                          <>
+                            <Lock className="w-4 h-4 text-slate-500" />
+                            <span>
+                              Aguarde o cumprimento dos {selectedTask.estimatedMinutes} min ({Math.floor(remainingSeconds / 60)}m {remainingSeconds % 60}s)
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4 text-slate-950" />
+                            <span>Validar Conclusão & Receber (+{selectedTask.rewardPoints} PTS)</span>
+                          </>
+                        )}
+                      </button>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <button
+                          type="button"
+                          onClick={handleAbandonTask}
+                          className="text-xs text-rose-400/80 hover:text-rose-400 font-medium transition-colors"
+                        >
+                          Abandonar sessão da tarefa
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTask(null)}
+                          className="text-xs text-slate-400 hover:text-slate-300 font-medium transition-colors"
+                        >
+                          Minimizar janela
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  <button
-                    onClick={() => setSelectedTask(null)}
-                    className="px-6 py-2.5 rounded-xl bg-slate-800 text-slate-200 font-bold text-sm hover:bg-slate-700"
-                  >
-                    Continuar a Ganhar
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSelectedTask(null);
-                      setActiveTab('balance');
-                    }}
-                    className="px-6 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-black text-sm hover:bg-amber-400"
-                  >
-                    Ver no Saldo
-                  </button>
-                </div>
               </div>
             )}
           </div>

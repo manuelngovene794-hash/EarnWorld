@@ -61,6 +61,33 @@ export interface TaskItem {
   badge?: string;
 }
 
+export type TaskSessionStatus = 'in_progress' | 'completed' | 'abandoned';
+
+export interface UserTaskSession {
+  id: string;
+  userId: string;
+  taskId: string;
+  taskTitle: string;
+  rewardPoints: number;
+  requiredDurationSeconds: number;
+  startedAt: string;
+  eligibleAt: string;
+  completedAt?: string;
+  status: TaskSessionStatus;
+  credited: boolean;
+  userAnswers?: Record<string, string>;
+}
+
+export interface TaskCompletionRecord {
+  id: string;
+  userId: string;
+  taskId: string;
+  taskTitle: string;
+  rewardPoints: number;
+  completedAt: string;
+  durationSecondsSpent: number;
+}
+
 export type WithdrawalStatus = 'pending' | 'approved' | 'paid' | 'rejected';
 export type PaymentMethodId = 'mpesa' | 'emola' | 'paypal' | 'payoneer' | 'usdt' | 'bank';
 
