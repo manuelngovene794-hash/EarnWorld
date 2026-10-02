@@ -1,4 +1,4 @@
-import { AppConfig, TaskItem, WithdrawalRequest, Transaction, UserProfile, UserTaskSession, TaskCompletionRecord } from '../types';
+import { AppConfig, TaskItem, WithdrawalRequest, Transaction, UserProfile, UserTaskSession, TaskCompletionRecord, AppNotification } from '../types';
 import { DEFAULT_CONFIG, INITIAL_TASKS } from '../data/initialData';
 
 // Local storage helper functions for reliable, domain-independent browser persistence
@@ -232,7 +232,7 @@ export const storageService = {
     return completedIds.includes(taskId);
   },
 
-  // Start a task: Points are NEVER added at start. Real session is initiated with required duration.
+  // Start a task: Points are NEVER added at start. Real session is initiated without artificial wait timer.
   async startTaskSession(userId: string, taskId: string): Promise<UserTaskSession> {
     const user = await this.getUserProfile(userId);
     if (!user) {
@@ -255,17 +255,12 @@ export const storageService = {
     const sessionKey = `${userId}_${taskId}`;
     const existing = allSessions[sessionKey];
 
-    // If already in progress and not expired, return existing session
+    // If already in progress, return existing session
     if (existing && existing.status === 'in_progress') {
       return existing;
     }
 
-    // Duration in seconds: (estimatedMinutes * 60)
-    // E.g., 12 minutes = 720 seconds
-    const minutes = Math.max(1, task.estimatedMinutes || 1);
-    const requiredDurationSeconds = minutes * 60;
     const startedAt = new Date().toISOString();
-    const eligibleAt = new Date(Date.now() + requiredDurationSeconds * 1000).toISOString();
 
     const newSession: UserTaskSession = {
       id: `ts_${userId}_${taskId}_${Date.now()}`,
@@ -273,9 +268,7 @@ export const storageService = {
       taskId,
       taskTitle: task.titlePt || task.title,
       rewardPoints: task.rewardPoints,
-      requiredDurationSeconds,
       startedAt,
-      eligibleAt,
       status: 'in_progress',
       credited: false
     };
@@ -283,11 +276,11 @@ export const storageService = {
     allSessions[sessionKey] = newSession;
     setLocal('earnworld_task_sessions_db', allSessions);
 
-    // CRITICAL: Notice that NO points are credited to the user here!
+    // CRITICAL: NO points credited at start!
     return newSession;
   },
 
-  // Validate real completion: checks duration, anti-duplicate, and credits points ONLY on success
+  // Validate real completion: validates required answers, prevents duplicate credit, and credits points ONLY on success
   async validateAndCompleteTask(
     userId: string, 
     taskId: string, 
@@ -323,22 +316,20 @@ export const storageService = {
       throw new Error('Os pontos desta tarefa já foram creditados anteriormente.');
     }
 
-    // 3. RULE: Real duration condition validation
-    // E.g. If the task requires 12 minutes, user MUST have elapsed the full 12 minutes
-    const startTimeMs = new Date(session.startedAt).getTime();
-    const elapsedSeconds = Math.floor((Date.now() - startTimeMs) / 1000);
-
-    if (elapsedSeconds < session.requiredDurationSeconds) {
-      const remainingSeconds = session.requiredDurationSeconds - elapsedSeconds;
-      const mins = Math.floor(remainingSeconds / 60);
-      const secs = remainingSeconds % 60;
-      const timeStr = mins > 0 ? `${mins} minuto(s) e ${secs} segundo(s)` : `${secs} segundo(s)`;
-      throw new Error(
-        `Condição não cumprida: Esta tarefa exige a permanência e dedicação de ${task.estimatedMinutes} minutos. Restam ainda ${timeStr} para a validação real ser liberada.`
-      );
+    // 3. RULE: Real completion validation (criteria fulfilled by user)
+    if (task.category === 'survey') {
+      const hasAnswer = userAnswers && Object.values(userAnswers).some(val => val && val.trim().length > 0);
+      if (!hasAnswer) {
+        throw new Error('Por favor responda à questão da pesquisa antes de validar a tarefa.');
+      }
+    } else {
+      const hasConfirmed = userAnswers && Object.keys(userAnswers).length > 0;
+      if (!hasConfirmed) {
+        throw new Error('Por favor confirme as etapas da oferta para concluir a validação.');
+      }
     }
 
-    // 4. ATOMIC CREDITING: All conditions met!
+    // 4. ATOMIC CREDITING: All conditions met without artificial timers!
     // A. Mark session as completed and credited
     const completedAt = new Date().toISOString();
     session.status = 'completed';
@@ -359,8 +350,7 @@ export const storageService = {
       taskId,
       taskTitle: task.titlePt || task.title,
       rewardPoints: task.rewardPoints,
-      completedAt,
-      durationSecondsSpent: elapsedSeconds
+      completedAt
     });
     completedMap[userId] = userCompleted;
     setLocal('earnworld_completed_tasks_db', completedMap);
@@ -384,6 +374,15 @@ export const storageService = {
       description: `Conclusão real validada: ${task.titlePt} (${task.partner})`,
       status: 'completed',
       createdAt: completedAt
+    });
+
+    // E. Send notification to user
+    await this.addNotification({
+      userId,
+      title: '🎯 Recompensa Creditada!',
+      message: `Recebeu +${task.rewardPoints} pontos pela conclusão com sucesso da tarefa: "${task.titlePt}".`,
+      type: 'task',
+      linkTab: 'balance'
     });
 
     return {
@@ -473,7 +472,6 @@ export const storageService = {
     const withdrawal: WithdrawalRequest = {
       ...req,
       id,
-      amountMzn: 0,
       status: 'pending',
       statusMessage: 'Aguardando validação do administrador.'
     };
@@ -500,6 +498,15 @@ export const storageService = {
       description: `Levantamento via ${req.paymentMethod.toUpperCase()} (US$ ${req.amountUsd.toFixed(2)})`,
       status: 'pending',
       createdAt: new Date().toISOString()
+    });
+
+    // Notify user of submitted withdrawal
+    await this.addNotification({
+      userId: req.userId,
+      title: '📤 Pedido de Saque Enviado',
+      message: `Solicitação de US$ ${req.amountUsd.toFixed(2)} via ${req.paymentMethod.toUpperCase()} registada com sucesso. Aguarda aprovação do administrador.`,
+      type: 'withdrawal',
+      linkTab: 'history'
     });
 
     return withdrawal;
@@ -555,6 +562,15 @@ export const storageService = {
     withdrawals[idx] = updated;
     setLocal('earnworld_withdrawals_db', withdrawals);
 
+    // Notify user of approved withdrawal
+    await this.addNotification({
+      userId: wth.userId,
+      title: '✅ Saque Aprovado!',
+      message: `O seu pedido de levantamento de US$ ${wth.amountUsd.toFixed(2)} via ${wth.paymentMethod.toUpperCase()} foi aprovado e o pagamento está em processamento.`,
+      type: 'withdrawal',
+      linkTab: 'history'
+    });
+
     return { withdrawal: updated, newFund };
   },
 
@@ -604,6 +620,15 @@ export const storageService = {
     withdrawals[idx] = updated;
     setLocal('earnworld_withdrawals_db', withdrawals);
 
+    // Notify user of paid withdrawal
+    await this.addNotification({
+      userId: wth.userId,
+      title: '💰 Saque Pago com Sucesso!',
+      message: `O pagamento de US$ ${wth.amountUsd.toFixed(2)} via ${wth.paymentMethod.toUpperCase()} foi liquidado com sucesso. Referência: ${txRef}`,
+      type: 'withdrawal',
+      linkTab: 'history'
+    });
+
     return { withdrawal: updated, newFund };
   },
 
@@ -619,26 +644,15 @@ export const storageService = {
       throw new Error('Pedidos que já foram pagos e liquidados não podem ser rejeitados.');
     }
     if (wth.status === 'rejected') {
-      throw new Error('Este pedido já foi rejeitado anteriormente.');
+      throw new Error('Este pedido já se encontra rejeitado.');
     }
-
-    const wasApproved = wth.status === 'approved';
 
     // Refund points to user
     await this.refundWithdrawalPoints(wth.userId, wth.pointsDeducted);
-    await this.addTransaction({
-      userId: wth.userId,
-      type: 'refund',
-      points: wth.pointsDeducted,
-      amountUsd: wth.amountUsd,
-      description: `Reembolso de Levantamento: ${reason}`,
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    });
 
-    let restoredFund: number | undefined;
-    if (wasApproved) {
-      // Restore fund since it was deducted when approved
+    let restoredFund: number | undefined = undefined;
+    // If it was already approved, return money to available fund
+    if (wth.status === 'approved') {
       const config = await this.getAppConfig();
       const currentFund = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
       restoredFund = Number((currentFund + wth.amountUsd).toFixed(2));
@@ -651,14 +665,138 @@ export const storageService = {
     const updated: WithdrawalRequest = {
       ...wth,
       status: 'rejected',
-      statusMessage: `Rejeitado: ${reason}. Pontos devolvidos ao saldo.`,
+      statusMessage: `Rejeitado: ${reason}. Os pontos foram estornados para o saldo.`,
       updatedAt: new Date().toISOString()
     };
 
     withdrawals[idx] = updated;
     setLocal('earnworld_withdrawals_db', withdrawals);
 
+    // Record refund transaction
+    await this.addTransaction({
+      userId: wth.userId,
+      type: 'refund',
+      points: wth.pointsDeducted,
+      amountUsd: wth.amountUsd,
+      description: `Reembolso de Saque Rejeitado (${reason})`,
+      status: 'completed',
+      createdAt: new Date().toISOString()
+    });
+
+    // Notify user of rejected withdrawal
+    await this.addNotification({
+      userId: wth.userId,
+      title: '❌ Pedido de Saque Recusado',
+      message: `O seu pedido de levantamento de US$ ${wth.amountUsd.toFixed(2)} foi recusado (${reason}). Os ${wth.pointsDeducted.toLocaleString()} pontos foram reembolsados na sua conta.`,
+      type: 'withdrawal',
+      linkTab: 'history'
+    });
+
     return { withdrawal: updated, restoredFund };
+  },
+
+  // Add / Adjust Payment Fund (Admin protected action)
+  async addPaymentFund(amountUsd: number, note?: string): Promise<number> {
+    const config = await this.getAppConfig();
+    const current = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
+    const newFund = Math.max(0, Number((current + amountUsd).toFixed(2)));
+
+    await this.updateAppConfig({
+      paymentFundUsd: newFund,
+      availableRealRevenueUsd: newFund
+    });
+
+    if (amountUsd > 0) {
+      await this.addNotification({
+        userId: 'all',
+        title: '🛡️ Fundo de Pagamentos Reforçado',
+        message: `Foram adicionados US$ ${amountUsd.toFixed(2)} ao fundo de liquidez disponível para pagamentos de saques. ${note ? `Nota: ${note}` : ''}`,
+        type: 'announcement',
+        linkTab: 'withdraw'
+      });
+    }
+
+    return newFund;
+  },
+
+  // Notifications Management
+  async getNotifications(userId: string): Promise<AppNotification[]> {
+    const list = getLocal<AppNotification[]>('earnworld_notifications_db', []);
+    if (list.length === 0) {
+      const initialNotifs: AppNotification[] = [
+        {
+          id: 'notif_welcome',
+          userId: 'all',
+          title: '🎉 Bem-vindo ao EarnWorld!',
+          message: 'Ganhe recompensas completando pesquisas e tarefas sem esperas artificiais. Levantamentos disponíveis via PayPal, Payoneer e USDT.',
+          type: 'news',
+          read: false,
+          createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
+          linkTab: 'earn'
+        },
+        {
+          id: 'notif_fund',
+          userId: 'all',
+          title: '🛡️ Fundo Garantido para Pagamentos',
+          message: 'O saldo para pagamentos é gerido com liquidez reservada. Mínimo de saque: 5.000 pontos (US$ 5,00). 1.000 pontos = US$ 1,00.',
+          type: 'announcement',
+          read: false,
+          createdAt: new Date(Date.now() - 3600000 * 12).toISOString(),
+          linkTab: 'withdraw'
+        },
+        {
+          id: 'notif_new_tasks',
+          userId: 'all',
+          title: '📋 Novas Pesquisas no Mural',
+          message: 'Novas pesquisas e ofertas foram adicionadas ao mural. Responda com honestidade e receba os pontos na hora da validação!',
+          type: 'task',
+          read: false,
+          createdAt: new Date(Date.now() - 3600000 * 3).toISOString(),
+          linkTab: 'earn'
+        }
+      ];
+      setLocal('earnworld_notifications_db', initialNotifs);
+      return initialNotifs;
+    }
+
+    // Filter for this user or 'all' broadcasts
+    const userNotifs = list.filter(n => n.userId === userId || n.userId === 'all');
+    return userNotifs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  },
+
+  async addNotification(notif: Omit<AppNotification, 'id' | 'createdAt' | 'read'>): Promise<AppNotification> {
+    const list = getLocal<AppNotification[]>('earnworld_notifications_db', []);
+    const newNotif: AppNotification = {
+      ...notif,
+      id: 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      read: false,
+      createdAt: new Date().toISOString()
+    };
+    list.unshift(newNotif);
+    setLocal('earnworld_notifications_db', list);
+    window.dispatchEvent(new Event('earnworld_storage_sync'));
+    return newNotif;
+  },
+
+  async markNotificationAsRead(userId: string, notifId: string): Promise<void> {
+    const list = getLocal<AppNotification[]>('earnworld_notifications_db', []);
+    const idx = list.findIndex(n => n.id === notifId && (n.userId === userId || n.userId === 'all'));
+    if (idx >= 0) {
+      list[idx].read = true;
+      setLocal('earnworld_notifications_db', list);
+      window.dispatchEvent(new Event('earnworld_storage_sync'));
+    }
+  },
+
+  async markAllNotificationsAsRead(userId: string): Promise<void> {
+    const list = getLocal<AppNotification[]>('earnworld_notifications_db', []);
+    for (const n of list) {
+      if (n.userId === userId || n.userId === 'all') {
+        n.read = true;
+      }
+    }
+    setLocal('earnworld_notifications_db', list);
+    window.dispatchEvent(new Event('earnworld_storage_sync'));
   },
 
   async updateWithdrawal(withdrawal: WithdrawalRequest): Promise<void> {

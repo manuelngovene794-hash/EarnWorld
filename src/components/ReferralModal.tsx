@@ -55,7 +55,7 @@ export const ReferralModal: React.FC<ReferralModalProps> = ({ config, onOpenAuth
   };
 
   const shareText = encodeURIComponent(
-    `Junta-te a mim no EarnWorld – Global Rewards! Plataforma gratuita de recompensas com pagamentos via M-Pesa, e-Mola, PayPal e USDT. Usa o meu código de convite: ${referralCode}\n${referralLink}`
+    `Junta-te a mim no EarnWorld – Global Rewards! Plataforma gratuita de recompensas com pagamentos via PayPal, Payoneer e USDT. Usa o meu código de convite: ${referralCode}\n${referralLink}`
   );
 
   return (

@@ -47,7 +47,6 @@ export const ReferralsPage: React.FC<ReferralsPageProps> = ({ config, onOpenAuth
   const referralCode = currentUser?.referralCode || 'EWVIP777';
   const bonusPts = config.referralBonusPoints || 200;
   const approxUsdBonus = (bonusPts / (config.pointsPerDollar || 1000)).toFixed(2);
-  const approxMznBonus = ((bonusPts / (config.pointsPerDollar || 1000)) * (config.usdToMznRate || 64)).toFixed(0);
 
   const inviteLink = `${window.location.origin}/?ref=${referralCode}#register`;
 
@@ -95,7 +94,7 @@ export const ReferralsPage: React.FC<ReferralsPageProps> = ({ config, onOpenAuth
 
   const handleShareWhatsApp = () => {
     const text = encodeURIComponent(
-      `🔥 Junte-se ao EarnWorld e ganhe recompensas reais! Sem depósitos nem mensalidades. Funciona com M-Pesa, e-Mola, PayPal e USDT. Use o meu código de convite: ${referralCode} ou clique no link: ${inviteLink}`
+      `🔥 Junte-se ao EarnWorld e ganhe recompensas reais! Sem depósitos nem mensalidades. Funciona com PayPal, Payoneer e USDT. Use o meu código de convite: ${referralCode} ou clique no link: ${inviteLink}`
     );
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
   };
@@ -116,7 +115,7 @@ export const ReferralsPage: React.FC<ReferralsPageProps> = ({ config, onOpenAuth
           <div className="space-y-2 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-semibold">
               <Users className="w-3.5 h-3.5 text-purple-400" />
-              <span>Programa de Indicação Global & Moçambique</span>
+              <span>Programa de Indicação Global</span>
             </div>
             
             <h1 className="text-2xl sm:text-4xl font-black text-white">
@@ -127,7 +126,7 @@ export const ReferralsPage: React.FC<ReferralsPageProps> = ({ config, onOpenAuth
             </h1>
             
             <p className="text-sm text-slate-300 leading-relaxed">
-              Partilhe o seu código e link de convite exclusivo. Por cada amigo que criar conta e começar a ganhar, recebe <strong>+{bonusPts} PTS</strong> (≈ ${approxUsdBonus} USD / {approxMznBonus} MT) na sua conta!
+              Partilhe o seu código e link de convite exclusivo. Por cada amigo que criar conta e começar a ganhar, recebe <strong>+{bonusPts} PTS</strong> (≈ ${approxUsdBonus} USD) na sua conta!
             </p>
           </div>
 
@@ -265,7 +264,7 @@ export const ReferralsPage: React.FC<ReferralsPageProps> = ({ config, onOpenAuth
             {(referrals.length * bonusPts).toLocaleString()} PTS
           </p>
           <p className="text-[11px] text-emerald-400 mt-1">
-            ≈ ${((referrals.length * bonusPts) / (config.pointsPerDollar || 1000)).toFixed(2)} USD / {(((referrals.length * bonusPts) / (config.pointsPerDollar || 1000)) * (config.usdToMznRate || 64)).toFixed(0)} MT
+            ≈ ${((referrals.length * bonusPts) / (config.pointsPerDollar || 1000)).toFixed(2)} USD
           </p>
         </div>
 

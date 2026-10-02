@@ -53,9 +53,9 @@ export const EarnPage: React.FC<EarnPageProps> = ({
   const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
   const [userTaskSessions, setUserTaskSessions] = useState<Record<string, UserTaskSession>>({});
   const [activeSession, setActiveSession] = useState<UserTaskSession | null>(null);
-  const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
   const [taskErrorMessage, setTaskErrorMessage] = useState<string>('');
   const [surveyResponse, setSurveyResponse] = useState<string>('');
+  const [offerConfirmed, setOfferConfirmed] = useState<boolean>(false);
   const [isStartingTask, setIsStartingTask] = useState<boolean>(false);
 
   // Ad cooldown
@@ -86,24 +86,6 @@ export const EarnPage: React.FC<EarnPageProps> = ({
   useEffect(() => {
     loadUserTaskData();
   }, [currentUser]);
-
-  // Live timer for active session
-  useEffect(() => {
-    if (!activeSession || activeSession.status !== 'in_progress') {
-      return;
-    }
-
-    const updateTimer = () => {
-      const startMs = new Date(activeSession.startedAt).getTime();
-      const elapsed = Math.floor((Date.now() - startMs) / 1000);
-      const rem = Math.max(0, activeSession.requiredDurationSeconds - elapsed);
-      setRemainingSeconds(rem);
-    };
-
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [activeSession]);
 
   // Daily Checkin info
   const todayStr = new Date().toISOString().split('T')[0];
@@ -144,20 +126,14 @@ export const EarnPage: React.FC<EarnPageProps> = ({
     setCompletionSuccess(false);
     setTaskErrorMessage('');
     setSurveyResponse('');
+    setOfferConfirmed(false);
 
     // Check if task session already exists
     const session = await storageService.getTaskSession(currentUser.id, task.id);
     setActiveSession(session);
-    if (session && session.status === 'in_progress') {
-      const startMs = new Date(session.startedAt).getTime();
-      const elapsed = Math.floor((Date.now() - startMs) / 1000);
-      setRemainingSeconds(Math.max(0, session.requiredDurationSeconds - elapsed));
-    } else {
-      setRemainingSeconds((task.estimatedMinutes || 1) * 60);
-    }
   };
 
-  // 1. START TASK: Never awards points upon starting! Creates a real session with timestamp.
+  // 1. START TASK: Never awards points upon starting! Creates a real session.
   const handleStartTask = async () => {
     if (!selectedTask || !currentUser) return;
     setIsStartingTask(true);
@@ -167,7 +143,6 @@ export const EarnPage: React.FC<EarnPageProps> = ({
       const session = await storageService.startTaskSession(currentUser.id, selectedTask.id);
       setActiveSession(session);
       setUserTaskSessions(prev => ({ ...prev, [selectedTask.id]: session }));
-      setRemainingSeconds(session.requiredDurationSeconds);
     } catch (e: any) {
       setTaskErrorMessage(e.message || 'Erro ao iniciar a tarefa.');
     } finally {
@@ -175,7 +150,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
     }
   };
 
-  // 2. VALIDATE & COMPLETE TASK: Only credits points if duration condition is satisfied and task not duplicate
+  // 2. VALIDATE & COMPLETE TASK: Real validation without artificial wait timers!
   const handleConfirmTaskCompletion = async () => {
     if (!selectedTask || !currentUser) return;
     setIsCompleting(true);
@@ -183,11 +158,19 @@ export const EarnPage: React.FC<EarnPageProps> = ({
 
     try {
       const userAnswers: Record<string, string> = {};
-      if (surveyResponse) {
+      if (selectedTask.category === 'survey') {
+        if (!surveyResponse) {
+          throw new Error('Por favor, selecione uma resposta para a pesquisa antes de submeter.');
+        }
         userAnswers['opinion'] = surveyResponse;
+      } else {
+        if (!offerConfirmed) {
+          throw new Error('Por favor, confirme a conclusão dos passos do parceiro.');
+        }
+        userAnswers['confirmed'] = 'true';
       }
 
-      const result = await storageService.validateAndCompleteTask(
+      await storageService.validateAndCompleteTask(
         currentUser.id,
         selectedTask.id,
         userAnswers
@@ -399,13 +382,58 @@ export const EarnPage: React.FC<EarnPageProps> = ({
 
       {/* 3. Surveys & Partner Offers */}
       <div>
+        {/* Transparent Points Conversion & Rules Banner */}
+        <div className="mb-6 p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/40 border border-slate-800 space-y-3 shadow-lg">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] font-bold">
+                <Sparkles className="w-3 h-3 text-amber-400" />
+                <span>Conversão Clara • Sem Espera Artificial</span>
+              </div>
+              <h3 className="text-base sm:text-lg font-black text-white mt-1">
+                Regras de Pontos & Saques Mínimos
+              </h3>
+              <p className="text-xs text-slate-300">
+                Ganhe pontos honestamente completando pesquisas e ofertas. Cada <strong className="text-amber-400">1.000 Pontos = US$ 1,00</strong>.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-300 font-semibold">
+                Mínimo: <strong className="text-white">5.000 PTS (US$ 5,00)</strong>
+              </span>
+              <span className="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold">
+                PayPal • Payoneer • USDT
+              </span>
+            </div>
+          </div>
+
+          {/* User Progress toward minimum withdrawal */}
+          {currentUser && (
+            <div className="pt-2 border-t border-slate-800/80">
+              <div className="flex items-center justify-between text-xs mb-1.5">
+                <span className="text-slate-400">Progresso para o 1º Saque (5.000 PTS):</span>
+                <span className="font-bold text-amber-400">
+                  {(currentUser.pointsBalance || 0).toLocaleString()} / 5.000 PTS ({Math.min(100, Math.round(((currentUser.pointsBalance || 0) / 5000) * 100))}%)
+                </span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-amber-500 to-yellow-400 transition-all duration-500"
+                  style={{ width: `${Math.min(100, Math.max(0, ((currentUser.pointsBalance || 0) / 5000) * 100))}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
               <FileText className="w-5 h-5 text-amber-400" />
               <span>3. Pesquisas & Ofertas de Parceiros</span>
             </h2>
-            <p className="text-xs text-slate-400">Responda a questionários e teste apps para ganhar grandes quantias de pontos.</p>
+            <p className="text-xs text-slate-400">Responda a questionários e valide ações de parceiros para acumular pontos reais.</p>
           </div>
 
           {/* Filter Pills */}
@@ -457,10 +485,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredTasks.map((task) => {
             const approxUsd = (task.rewardPoints / (config.pointsPerDollar || 1000)).toFixed(2);
-            const approxMzn = (Number(approxUsd) * (config.usdToMznRate || 64)).toFixed(0);
             const isCompleted = completedTaskIds.includes(task.id);
-            const session = userTaskSessions[task.id];
-            const isInProgress = session && session.status === 'in_progress';
 
             return (
               <div
@@ -469,8 +494,6 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                 className={`p-5 rounded-2xl border cursor-pointer transition-all flex flex-col justify-between group shadow-lg ${
                   isCompleted
                     ? 'bg-slate-900/60 border-emerald-500/30 hover:border-emerald-500/50'
-                    : isInProgress
-                    ? 'bg-slate-900 border-amber-500/50 hover:border-amber-400'
                     : 'bg-slate-900 border-slate-800 hover:border-amber-500/50 hover:scale-[1.01]'
                 }`}
               >
@@ -485,11 +508,6 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                           <CheckCircle2 className="w-3 h-3" />
                           <span>Concluída</span>
                         </span>
-                      ) : isInProgress ? (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1 animate-pulse">
-                          <Clock className="w-3 h-3" />
-                          <span>Em Progresso</span>
-                        </span>
                       ) : task.badge ? (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
                           {task.badge}
@@ -498,7 +516,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                     </div>
                     <div className="text-right">
                       <span className="text-base font-black text-amber-400">+{task.rewardPoints} PTS</span>
-                      <p className="text-[10px] text-slate-400">≈ ${approxUsd} / {approxMzn} MT</p>
+                      <p className="text-[10px] text-slate-400">≈ ${approxUsd} USD</p>
                     </div>
                   </div>
 
@@ -513,10 +531,6 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                 <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
                   <div className="flex items-center gap-3">
                     <span className="text-slate-300 font-medium">Provedor: {task.partner}</span>
-                    <span className="flex items-center gap-1 text-slate-400">
-                      <Clock className="w-3.5 h-3.5" />
-                      {task.estimatedMinutes} min
-                    </span>
                   </div>
 
                   {isCompleted ? (
@@ -524,14 +538,9 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       <span>Concluída</span>
                     </span>
-                  ) : isInProgress ? (
-                    <button className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs flex items-center gap-1 shadow-md shadow-amber-500/20">
-                      <Clock className="w-3.5 h-3.5" />
-                      <span>Continuar</span>
-                    </button>
                   ) : (
                     <button className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-300 group-hover:bg-amber-500 group-hover:text-slate-950 font-bold text-xs flex items-center gap-1 transition-colors">
-                      <span>Iniciar ({task.estimatedMinutes} min)</span>
+                      <span>Realizar Tarefa</span>
                       <ChevronRight className="w-3.5 h-3.5" />
                     </button>
                   )}
@@ -584,10 +593,10 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                 <div>
                   <h3 className="text-xl font-black text-white">Tarefa Validada com Sucesso!</h3>
                   <p className="text-sm text-slate-300 mt-1">
-                    Condição de permanência cumprida! Foram creditados <strong className="text-amber-400">+{selectedTask.rewardPoints} pontos</strong> ao seu saldo.
+                    Critérios cumpridos com sucesso! Foram creditados <strong className="text-amber-400">+{selectedTask.rewardPoints} pontos</strong> ao seu saldo.
                   </p>
                   <p className="text-xs text-emerald-400 mt-1 font-semibold">
-                    Equivalente a US$ {(selectedTask.rewardPoints / 1000).toFixed(2)} ({((selectedTask.rewardPoints / 1000) * (config.usdToMznRate || 64)).toFixed(2)} MT)
+                    Equivalente a US$ {(selectedTask.rewardPoints / 1000).toFixed(2)} USD
                   </p>
                 </div>
 
@@ -610,7 +619,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                 </div>
               </div>
             ) : (
-              /* In Progress / Pre-Start State */
+              /* Real Task Interaction */
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
                   <span className="text-xs px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-300 font-bold uppercase">
@@ -633,109 +642,67 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                     <span className="text-white font-semibold">US$ {(selectedTask.rewardPoints / 1000).toFixed(2)}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">Tempo Exigido de Permanência:</span>
-                    <span className="text-amber-300 font-bold flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" />
-                      {selectedTask.estimatedMinutes} minutos completos
-                    </span>
+                    <span className="text-slate-400">Validação:</span>
+                    <span className="text-emerald-400 font-semibold">Imediata após resposta válida (sem espera artificial)</span>
                   </div>
                 </div>
 
-                {/* Real Condition Notice */}
-                {(!activeSession || activeSession.status !== 'in_progress') ? (
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 text-xs text-slate-300 space-y-1.5">
-                    <div className="flex items-center gap-1.5 text-amber-400 font-bold">
-                      <ShieldCheck className="w-4 h-4 shrink-0" />
-                      <span>Condição Real de Cumprimento:</span>
-                    </div>
-                    <p className="text-[11px] text-slate-300 leading-relaxed">
-                      Os pontos <strong>NÃO são adicionados ao iniciar a tarefa</strong>. Só serão creditados após você cumprir os <strong>{selectedTask.estimatedMinutes} minutos</strong> de permanência ativa e responder às etapas do patrocinador.
-                    </p>
-                  </div>
-                ) : (
-                  /* Active Session Countdown Timer */
-                  <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/40 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Clock className={`w-5 h-5 ${remainingSeconds === 0 ? 'text-emerald-400' : 'text-amber-400 animate-spin'}`} />
-                        <span className="text-xs font-bold text-white uppercase tracking-wider">
-                          {remainingSeconds === 0 ? 'Tempo Exigido Cumprido!' : 'Temporizador da Tarefa em Andamento'}
-                        </span>
-                      </div>
-                      <span className={`font-mono text-xl font-black ${remainingSeconds === 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                        {String(Math.floor(remainingSeconds / 60)).padStart(2, '0')}:
-                        {String(remainingSeconds % 60).padStart(2, '0')}
-                      </span>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
-                      <div 
-                        className={`h-full transition-all duration-1000 ${
-                          remainingSeconds === 0 ? 'bg-emerald-500' : 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                        }`}
-                        style={{
-                          width: `${Math.min(100, Math.max(0, ((activeSession.requiredDurationSeconds - remainingSeconds) / activeSession.requiredDurationSeconds) * 100))}%`
-                        }}
-                      />
-                    </div>
-
-                    <p className="text-[11px] text-slate-400 leading-tight">
-                      {remainingSeconds > 0
-                        ? `Aguarde a conclusão dos ${selectedTask.estimatedMinutes} minutos para desbloquear a validação real dos pontos.`
-                        : `Condição de permanência cumprida! Você pode agora validar e creditar os pontos.`}
-                    </p>
-                  </div>
-                )}
-
                 {/* Interactive Activity (Survey / Offer steps) */}
-                {activeSession && activeSession.status === 'in_progress' && (
-                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
-                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wide">
-                      Etapa de Validação ({selectedTask.category === 'survey' ? 'Questionário' : 'Instruções do Patrocinador'})
-                    </span>
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                  <span className="text-xs font-bold text-amber-400 uppercase tracking-wide">
+                    Etapa de Conclusão ({selectedTask.category === 'survey' ? 'Questionário de Opinião' : 'Instruções do Patrocinador'})
+                  </span>
 
-                    {selectedTask.category === 'survey' ? (
-                      <div className="space-y-2">
-                        <p className="text-xs text-slate-200 font-medium">
-                          Qual é a sua principal avaliação sobre o uso de serviços e pagamentos digitais móveis no dia a dia?
-                        </p>
-                        {[
-                          'Utilizo quase diariamente para serviços, compras e recargas.',
-                          'Utilizo semanalmente e considero seguro e confiável.',
-                          'Utilizo ocasionalmente, preferindo opções com menores taxas.'
-                        ].map((opt) => (
-                          <label 
-                            key={opt} 
-                            className={`flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer text-xs transition-colors ${
-                              surveyResponse === opt 
-                                ? 'bg-amber-500/15 border-amber-500/60 text-amber-200' 
-                                : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
-                            }`}
-                          >
-                            <input 
-                              type="radio" 
-                              name="earn_survey_response" 
-                              checked={surveyResponse === opt}
-                              onChange={() => setSurveyResponse(opt)}
-                              className="accent-amber-500 mt-0.5" 
-                            />
-                            <span>{opt}</span>
-                          </label>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="space-y-2 text-xs text-slate-300">
-                        <p className="text-slate-200 font-medium">Etapas da oferta ({selectedTask.partner}):</p>
-                        <ol className="list-decimal pl-4 space-y-1 text-slate-400 text-[11px]">
-                          <li>Visite a plataforma do patrocinador e realize o procedimento gratuito.</li>
-                          <li>Mantenha a atividade aberta durante o tempo estipulado.</li>
-                          <li>Ao zerar o cronômetro, clique em validar para receber os pontos.</li>
-                        </ol>
-                      </div>
-                    )}
-                  </div>
-                )}
+                  {selectedTask.category === 'survey' ? (
+                    <div className="space-y-2.5">
+                      <p className="text-xs text-slate-200 font-medium">
+                        Selecione a sua resposta sincera sobre hábitos digitais e serviços online:
+                      </p>
+                      {[
+                        'Utilizo frequentemente serviços e pagamentos digitais no meu dia a dia.',
+                        'Utilizo semanalmente e valorizo velocidade, transparência e segurança.',
+                        'Utilizo ocasionalmente para compras, serviços e transferências internacionais.'
+                      ].map((opt) => (
+                        <label 
+                          key={opt} 
+                          className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer text-xs transition-colors ${
+                            surveyResponse === opt 
+                              ? 'bg-amber-500/15 border-amber-500/60 text-amber-200' 
+                              : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                          }`}
+                        >
+                          <input 
+                            type="radio" 
+                            name="earn_survey_response" 
+                            checked={surveyResponse === opt}
+                            onChange={() => setSurveyResponse(opt)}
+                            className="accent-amber-500 mt-0.5" 
+                          />
+                          <span>{opt}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-3 text-xs text-slate-300">
+                      <p className="text-slate-200 font-medium">Passos para validação da oferta ({selectedTask.partner}):</p>
+                      <ol className="list-decimal pl-4 space-y-1.5 text-slate-400 text-[11px]">
+                        <li>Aceda à plataforma oficial do patrocinador {selectedTask.partner}.</li>
+                        <li>Realize a instrução indicada na descrição da oferta.</li>
+                        <li>Confirme no campo abaixo para validar o crédito dos pontos.</li>
+                      </ol>
+
+                      <label className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 cursor-pointer text-slate-200 mt-2">
+                        <input 
+                          type="checkbox" 
+                          checked={offerConfirmed} 
+                          onChange={(e) => setOfferConfirmed(e.target.checked)} 
+                          className="w-4 h-4 rounded accent-amber-500"
+                        />
+                        <span className="text-xs font-semibold">Confirmo que acedi e completei os passos indicados pelo patrocinador.</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
 
                 {/* Error Banner */}
                 {taskErrorMessage && (
@@ -746,76 +713,27 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                 )}
 
                 {/* Action Buttons */}
-                <div className="pt-2">
-                  {!activeSession || activeSession.status !== 'in_progress' ? (
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => setSelectedTask(null)}
-                        className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition-colors"
-                      >
-                        Cancelar
-                      </button>
-                      <button
-                        onClick={handleStartTask}
-                        disabled={isStartingTask}
-                        className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-sm hover:from-amber-400 hover:to-yellow-300 shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all active:scale-95"
-                      >
-                        {isStartingTask ? (
-                          <span>A iniciar...</span>
-                        ) : (
-                          <>
-                            <Clock className="w-4 h-4" />
-                            <span>Iniciar Tarefa ({selectedTask.estimatedMinutes} min)</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <button
-                        onClick={handleConfirmTaskCompletion}
-                        disabled={isCompleting || remainingSeconds > 0 || (selectedTask.category === 'survey' && !surveyResponse)}
-                        className={`w-full py-3.5 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${
-                          remainingSeconds > 0 || (selectedTask.category === 'survey' && !surveyResponse)
-                            ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-                            : 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 hover:from-emerald-400 hover:to-teal-300 shadow-xl shadow-emerald-500/20 active:scale-95'
-                        }`}
-                      >
-                        {isCompleting ? (
-                          <span>A validar conclusão...</span>
-                        ) : remainingSeconds > 0 ? (
-                          <>
-                            <Lock className="w-4 h-4 text-slate-500" />
-                            <span>
-                              Aguarde o cumprimento dos {selectedTask.estimatedMinutes} min ({Math.floor(remainingSeconds / 60)}m {remainingSeconds % 60}s)
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="w-4 h-4 text-slate-950" />
-                            <span>Validar Conclusão & Receber (+{selectedTask.rewardPoints} PTS)</span>
-                          </>
-                        )}
-                      </button>
-
-                      <div className="flex items-center justify-between pt-1">
-                        <button
-                          type="button"
-                          onClick={handleAbandonTask}
-                          className="text-xs text-rose-400/80 hover:text-rose-400 font-medium transition-colors"
-                        >
-                          Abandonar sessão da tarefa
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedTask(null)}
-                          className="text-xs text-slate-400 hover:text-slate-300 font-medium transition-colors"
-                        >
-                          Minimizar janela
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                <div className="pt-2 flex items-center gap-3">
+                  <button
+                    onClick={() => setSelectedTask(null)}
+                    className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleConfirmTaskCompletion}
+                    disabled={isCompleting}
+                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-sm hover:from-amber-400 hover:to-yellow-300 shadow-xl shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isCompleting ? (
+                      <span>A validar...</span>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Validar & Receber (+{selectedTask.rewardPoints} PTS)</span>
+                      </>
+                    )}
+                  </button>
                 </div>
 
               </div>

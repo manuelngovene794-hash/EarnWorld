@@ -2,9 +2,6 @@ import { AppConfig, PaymentMethodConfig, TaskItem } from '../types';
 
 export const DEFAULT_CONFIG: AppConfig = {
   paymentFundUsd: 100.00,          // Fundo disponível para pagamentos (dinheiro real reservado pelo administrador)
-  usdToMznRate: 63.90,              // 1 USD = 63.90 MZN (Verified market rate, daily updated)
-  usdToMznLastUpdated: new Date().toISOString(),
-  usdToMznProvider: 'Open Exchange Rates (open.er-api.com)',
   availableRealRevenueUsd: 100.00, // Sincronizado com paymentFundUsd
   estimatedAdRevenueUsd: 0.00,     // Real ad network revenues
   minWithdrawalPoints: 5000,        // 5000 pts = $5.00
@@ -84,54 +81,22 @@ export const PAYMENT_METHODS: PaymentMethodConfig[] = [
         type: 'text'
       }
     ]
-  },
-  {
-    id: 'bank',
-    name: 'Transferência Bancária',
-    descriptionPt: 'Transferência bancária direta (IBAN / Conta) em USD.',
-    descriptionEn: 'Direct bank transfer (IBAN / Account Number) in USD.',
-    minUsd: 10,
-    supportedCountries: ['*'],
-    currencyTarget: 'USD',
-    fields: [
-      {
-        id: 'bankName',
-        labelPt: 'Nome do Banco',
-        labelEn: 'Bank Name',
-        placeholder: 'Ex: Millennium BIM, BCI, Standard Bank, Santander, Chase',
-        type: 'text'
-      },
-      {
-        id: 'account',
-        labelPt: 'Número de Conta / NIB / IBAN',
-        labelEn: 'Account Number / NIB / IBAN',
-        placeholder: 'Insira o número completo',
-        type: 'text'
-      },
-      {
-        id: 'holder',
-        labelPt: 'Nome do Beneficiário',
-        labelEn: 'Beneficiary Full Name',
-        placeholder: 'Nome completo no banco',
-        type: 'text'
-      }
-    ]
   }
 ];
 
 export const INITIAL_TASKS: TaskItem[] = [
   {
     id: 'survey-cpx-101',
-    title: 'Moçambique Consumer Insights & Mobile Money',
-    titlePt: 'Hábitos de Consumo e Carteiras Móveis em Moçambique',
-    description: 'Share your feedback on everyday mobile money usage and telecom providers.',
-    descriptionPt: 'Partilhe a sua opinião sobre o uso de M-Pesa, e-Mola e operadoras móveis.',
+    title: 'Digital Payments & Consumer Habits',
+    titlePt: 'Hábitos de Consumo e Pagamentos Digitais',
+    description: 'Share your feedback on everyday online payments, wallets, and telecom services.',
+    descriptionPt: 'Partilhe a sua opinião sobre carteiras digitais, serviços online e transferências.',
     category: 'survey',
-    rewardPoints: 850,
+    rewardPoints: 60,
     estimatedMinutes: 8,
     partner: 'CPX Research',
     isActive: true,
-    badge: 'Popular em MZ'
+    badge: 'Popular'
   },
   {
     id: 'survey-tech-102',
@@ -140,22 +105,34 @@ export const INITIAL_TASKS: TaskItem[] = [
     description: 'Answer questions about the digital services you use most frequently on mobile.',
     descriptionPt: 'Responda a perguntas sobre as aplicações móveis que utiliza no dia a dia.',
     category: 'survey',
-    rewardPoints: 1200,
+    rewardPoints: 80,
     estimatedMinutes: 12,
     partner: 'BitLabs',
     isActive: true,
-    badge: 'Alta Recompensa'
+    badge: 'Destaque'
   },
   {
     id: 'survey-shopping-103',
     title: 'Retail Trends & E-commerce Survey',
     titlePt: 'Tendências de Compras e Comércio Eletrónico',
     description: 'Quick poll about online delivery preferences, retail shops, and payments.',
-    descriptionPt: 'Pesquisa rápida sobre encomendas online e compras locais.',
+    descriptionPt: 'Pesquisa rápida sobre encomendas online e hábitos de consumo.',
     category: 'survey',
-    rewardPoints: 450,
+    rewardPoints: 45,
     estimatedMinutes: 5,
     partner: 'Pollfish',
+    isActive: true
+  },
+  {
+    id: 'survey-media-104',
+    title: 'Digital Media & Streaming Preferences',
+    titlePt: 'Preferências de Streaming e Conteúdo Digital',
+    description: 'Share your habits regarding video streaming platforms, podcasts, and digital news.',
+    descriptionPt: 'Avalie plataformas de streaming, áudio e consumo de conteúdos na web.',
+    category: 'survey',
+    rewardPoints: 55,
+    estimatedMinutes: 7,
+    partner: 'TheoremReach',
     isActive: true
   },
   {
@@ -165,7 +142,7 @@ export const INITIAL_TASKS: TaskItem[] = [
     description: 'Create a free decentralized wallet and verify your recovery phrase to earn points.',
     descriptionPt: 'Crie uma carteira digital segura e confirme a sua frase de segurança.',
     category: 'offer',
-    rewardPoints: 2500,
+    rewardPoints: 120,
     estimatedMinutes: 10,
     partner: 'OfferToro',
     isActive: true,
@@ -178,7 +155,7 @@ export const INITIAL_TASKS: TaskItem[] = [
     description: 'Install and reach level 5 in the partner logic game.',
     descriptionPt: 'Instale e complete 5 níveis no jogo parceiro de raciocínio e estratégia.',
     category: 'offer',
-    rewardPoints: 1400,
+    rewardPoints: 90,
     estimatedMinutes: 15,
     partner: 'AdGate Media',
     isActive: true
@@ -190,7 +167,7 @@ export const INITIAL_TASKS: TaskItem[] = [
     description: 'Confirm your email subscription to receive free market updates.',
     descriptionPt: 'Confirme o seu email na newsletter com dicas de finanças pessoais.',
     category: 'offer',
-    rewardPoints: 300,
+    rewardPoints: 35,
     estimatedMinutes: 2,
     partner: 'RevenueUniverse',
     isActive: true
@@ -200,9 +177,9 @@ export const INITIAL_TASKS: TaskItem[] = [
     title: 'Join EarnWorld Official Telegram Community',
     titlePt: 'Aderir à Comunidade Oficial EarnWorld no Telegram',
     description: 'Join the announcement channel for promo codes, alerts, and proofs.',
-    descriptionPt: 'Junte-se ao canal oficial para receber códigos promocionais e atualizações.',
+    descriptionPt: 'Junte-se ao canal oficial para receber códigos promocionais e avisos.',
     category: 'special',
-    rewardPoints: 150,
+    rewardPoints: 25,
     estimatedMinutes: 1,
     partner: 'EarnWorld',
     isActive: true,

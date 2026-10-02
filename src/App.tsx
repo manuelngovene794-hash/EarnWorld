@@ -18,7 +18,6 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppConfig } from './types';
 import { DEFAULT_CONFIG } from './data/initialData';
 import { storageService } from './services/storageService';
-import { exchangeRateService } from './services/exchangeRateService';
 
 function MainApp() {
   const { currentUser } = useAuth();
@@ -67,11 +66,10 @@ function MainApp() {
     };
   }, []);
 
-  // Subscribe to real-time global config (payment funds, exchange rates, rules)
+  // Subscribe to real-time global config (payment funds, rules)
   useEffect(() => {
     const unsubscribe = storageService.subscribeAppConfig((newCfg) => {
       setConfig(newCfg);
-      exchangeRateService.syncDailyExchangeRate(newCfg);
     });
     return () => unsubscribe();
   }, []);

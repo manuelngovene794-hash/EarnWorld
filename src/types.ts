@@ -21,9 +21,6 @@ export interface UserProfile {
 
 export interface AppConfig {
   paymentFundUsd: number;          // Fundo disponível para pagamentos (dinheiro real reservado pelo administrador)
-  usdToMznRate: number;
-  usdToMznLastUpdated?: string;    // Timestamp of last verified exchange rate update
-  usdToMznProvider?: string;       // Exchange rate source name
   availableRealRevenueUsd: number; // Real available liquid balance to pay withdrawals
   estimatedAdRevenueUsd: number;   // Estimated pending network ad earnings (NOT available for withdrawal)
   minWithdrawalPoints: number;     // 5000 points = $5.00
@@ -69,9 +66,7 @@ export interface UserTaskSession {
   taskId: string;
   taskTitle: string;
   rewardPoints: number;
-  requiredDurationSeconds: number;
   startedAt: string;
-  eligibleAt: string;
   completedAt?: string;
   status: TaskSessionStatus;
   credited: boolean;
@@ -85,11 +80,24 @@ export interface TaskCompletionRecord {
   taskTitle: string;
   rewardPoints: number;
   completedAt: string;
-  durationSecondsSpent: number;
+  durationSecondsSpent?: number;
+}
+
+export type NotificationType = 'task' | 'withdrawal' | 'news' | 'announcement' | 'reward';
+
+export interface AppNotification {
+  id: string;
+  userId: string; // user id or 'all' for broadcasts
+  title: string;
+  message: string;
+  type: NotificationType;
+  read: boolean;
+  createdAt: string;
+  linkTab?: string;
 }
 
 export type WithdrawalStatus = 'pending' | 'approved' | 'paid' | 'rejected';
-export type PaymentMethodId = 'mpesa' | 'emola' | 'paypal' | 'payoneer' | 'usdt' | 'bank';
+export type PaymentMethodId = 'paypal' | 'payoneer' | 'usdt';
 
 export interface WithdrawalRequest {
   id: string;
@@ -99,8 +107,6 @@ export interface WithdrawalRequest {
   country: string;
   pointsDeducted: number;
   amountUsd: number;
-  amountMzn: number;
-  exchangeRateUsed?: number;
   paymentMethod: PaymentMethodId;
   accountDetails: string;
   accountName?: string;
@@ -142,7 +148,7 @@ export interface PaymentMethodConfig {
   descriptionEn: string;
   minUsd: number;
   supportedCountries: string[]; // ['MZ'] or ['*'] for all
-  currencyTarget: 'MZN' | 'USD' | 'USDT';
+  currencyTarget: 'USD' | 'USDT';
   fields: {
     id: string;
     labelPt: string;

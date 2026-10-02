@@ -7,8 +7,8 @@ export const COUNTRIES: CountryInfo[] = [
     nameEn: 'Mozambique',
     flag: '🇲🇿',
     dialCode: '+258',
-    currency: 'MZN',
-    currencySymbol: 'MT',
+    currency: 'USD',
+    currencySymbol: '$',
     isPopular: true
   },
   {

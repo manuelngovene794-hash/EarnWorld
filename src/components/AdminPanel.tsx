@@ -24,11 +24,14 @@ import {
   Edit2,
   Trash2,
   ToggleLeft,
-  ToggleRight
+  ToggleRight,
+  Bell,
+  Send,
+  Lock,
+  Key
 } from 'lucide-react';
-import { AppConfig, WithdrawalRequest, UserProfile, PaymentMethodConfig, TaskItem } from '../types';
+import { AppConfig, WithdrawalRequest, UserProfile, PaymentMethodConfig, TaskItem, AppNotification } from '../types';
 import { storageService } from '../services/storageService';
-import { exchangeRateService } from '../services/exchangeRateService';
 import { PAYMENT_METHODS, INITIAL_TASKS } from '../data/initialData';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -42,14 +45,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   const { currentUser } = useAuth();
   const { t } = useLanguage();
 
-  const [activeTab, setActiveTab] = useState<'withdrawals' | 'users' | 'tasks' | 'methods' | 'revenue' | 'settings' | 'fraud'>('withdrawals');
+  const [activeTab, setActiveTab] = useState<'withdrawals' | 'revenue' | 'notifications' | 'users' | 'tasks' | 'methods' | 'settings' | 'fraud'>('withdrawals');
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>(INITIAL_TASKS);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>(PAYMENT_METHODS);
+  const [allNotifications, setAllNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [userSearch, setUserSearch] = useState<string>('');
+
+  // Notifications broadcast state
+  const [notifTitle, setNotifTitle] = useState('');
+  const [notifMessage, setNotifMessage] = useState('');
+  const [notifType, setNotifType] = useState<AppNotification['type']>('announcement');
+  const [notifTab, setNotifTab] = useState('earn');
+
+  // Passcode unlock for protected Admin Panel
+  const [passcode, setPasscode] = useState('');
+  const [isUnlockedWithPin, setIsUnlockedWithPin] = useState(false);
+  const [pinError, setPinError] = useState('');
 
   // Editable config fields
   const [paymentFund, setPaymentFund] = useState<number>(
@@ -58,7 +73,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   const [fundInput, setFundInput] = useState<number>(
     typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 100)
   );
-  const [usdMznRate, setUsdMznRate] = useState<number>(config.usdToMznRate || 64.0);
   const [availableRealRev, setAvailableRealRev] = useState<number>(
     typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 100)
   );
@@ -69,7 +83,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   const [refPts, setRefPts] = useState<number>(config.referralBonusPoints || 200);
   const [adProvider, setAdProvider] = useState<'monetag' | 'admob' | 'direct'>(config.adNetworkProvider || 'monetag');
   const [monetagZone, setMonetagZone] = useState<string>(config.monetagZoneId || 'monetag_rewarded_inpage');
-  const [isSyncingExchangeRate, setIsSyncingExchangeRate] = useState<boolean>(false);
   const [admobPub, setAdmobPub] = useState<string>(config.admobPublisherId || 'ca-pub-monetization-partner');
 
   // New task form state
@@ -78,7 +91,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   const [newTaskReward, setNewTaskReward] = useState<number>(1000);
   const [newTaskMinutes, setNewTaskMinutes] = useState<number>(10);
   const [newTaskPartner, setNewTaskPartner] = useState('CPX Research');
-  const [newTaskBadge, setNewTaskBadge] = useState('Novo em Moçambique');
+  const [newTaskBadge, setNewTaskBadge] = useState('Novo');
 
   // User points adjustment state
   const [selectedUserForPoints, setSelectedUserForPoints] = useState<UserProfile | null>(null);
@@ -95,16 +108,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
   const loadAdminData = async () => {
     setLoading(true);
     try {
-      const [allWths, allUsers, firestoreTasks] = await Promise.all([
+      const [allWths, allUsers, firestoreTasks, notifs] = await Promise.all([
         storageService.getAllWithdrawals(),
         storageService.getAllUsers(),
-        storageService.getTasks()
+        storageService.getTasks(),
+        storageService.getNotifications('all')
       ]);
       setWithdrawals(allWths);
       setUsers(allUsers);
       if (firestoreTasks && firestoreTasks.length > 0) {
         setTasks(firestoreTasks);
       }
+      setAllNotifications(notifs);
     } catch (e) {
       console.error('Failed to load admin data:', e);
     } finally {
@@ -134,7 +149,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
         ...config,
         paymentFundUsd: sanitizedFund,
         availableRealRevenueUsd: sanitizedFund,
-        usdToMznRate: Number(usdMznRate),
         estimatedAdRevenueUsd: Math.max(0, Number(estimatedAdRev)),
         minWithdrawalPoints: Number(minPts),
         adRewardPoints: Number(adPts),
@@ -175,24 +189,43 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
     await handleSavePaymentFund(updatedTotal);
   };
 
-  // Sync official live exchange rate from open forex source
-  const handleSyncExchangeRate = async () => {
-    setIsSyncingExchangeRate(true);
+  // Broadcast Announcement / Notification to all users
+  const handleBroadcastNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!notifTitle.trim() || !notifMessage.trim()) {
+      showToast('Por favor preencha o título e a mensagem da notificação.');
+      return;
+    }
+
     try {
-      const res = await exchangeRateService.syncDailyExchangeRate(config, true);
-      if (res.updated) {
-        setUsdMznRate(res.rate);
-        onUpdateConfig({
-          ...config,
-          usdToMznRate: res.rate,
-          usdToMznLastUpdated: res.lastUpdated
-        });
-      }
-      showToast(res.message);
+      await storageService.addNotification({
+        userId: 'all',
+        title: notifTitle.trim(),
+        message: notifMessage.trim(),
+        type: notifType,
+        linkTab: notifTab
+      });
+
+      const updatedNotifs = await storageService.getNotifications('all');
+      setAllNotifications(updatedNotifs);
+      setNotifTitle('');
+      setNotifMessage('');
+      showToast('Notificação transmitida para todos os utilizadores com sucesso!');
     } catch (e: any) {
-      showToast(`Erro ao sincronizar câmbio: ${e.message}`);
-    } finally {
-      setIsSyncingExchangeRate(false);
+      showToast(`Erro ao transmitir notificação: ${e.message}`);
+    }
+  };
+
+  const handleDeleteNotification = async (notifId: string) => {
+    try {
+      const all = await storageService.getNotifications('all');
+      const filtered = all.filter(n => n.id !== notifId);
+      localStorage.setItem('earnworld_notifications_db', JSON.stringify(filtered));
+      window.dispatchEvent(new Event('earnworld_storage_sync'));
+      setAllNotifications(filtered);
+      showToast('Notificação removida!');
+    } catch (e: any) {
+      showToast(`Erro ao remover notificação: ${e.message}`);
     }
   };
 
@@ -412,19 +445,67 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
 
   const isAdmin = currentUser?.role === 'admin' || 
                   currentUser?.email?.toLowerCase() === 'manuelngovene794@gmail.com' || 
-                  currentUser?.email?.toLowerCase() === 'admin@earnworld.com';
+                  currentUser?.email?.toLowerCase() === 'admin@earnworld.com' ||
+                  isUnlockedWithPin;
 
   if (!isAdmin) {
     return (
-      <div className="rounded-3xl bg-slate-900 border border-rose-500/40 p-8 sm:p-12 text-center max-w-lg mx-auto my-12 shadow-2xl space-y-4">
-        <div className="w-16 h-16 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
-          <ShieldAlert className="w-8 h-8" />
+      <div className="rounded-3xl bg-slate-900 border border-amber-500/40 p-8 sm:p-10 text-center max-w-lg mx-auto my-12 shadow-2xl space-y-5 animate-in fade-in">
+        <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-lg shadow-amber-500/10">
+          <Lock className="w-8 h-8" />
         </div>
-        <h2 className="text-2xl font-black text-white">Acesso Restrito ao Administrador</h2>
-        <p className="text-xs text-slate-300 leading-relaxed">
-          Apenas o administrador autorizado pode aceder a esta área e gerir o <strong>Fundo disponível para pagamentos</strong>.
-        </p>
-        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400">
+        <div>
+          <h2 className="text-2xl font-black text-white">Painel Administrativo Protegido</h2>
+          <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+            Área restrita para controlo do <strong>Fundo disponível para pagamentos</strong>, gestão de saques e envio de avisos. Digite o código de acesso para desbloquear.
+          </p>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const trimmed = passcode.trim();
+            if (trimmed === 'earnworld2025' || trimmed === 'admin123' || trimmed === 'admin') {
+              setIsUnlockedWithPin(true);
+              setPinError('');
+              showToast('Painel Administrativo desbloqueado com sucesso!');
+            } else {
+              setPinError('Código de acesso incorreto. Tente novamente.');
+            }
+          }}
+          className="space-y-3 pt-2 text-left"
+        >
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+              <Key className="w-3.5 h-3.5 text-amber-400" />
+              <span>Código de Acesso do Administrador:</span>
+            </label>
+            <input
+              type="password"
+              placeholder="Digite o código (ex: earnworld2025)..."
+              value={passcode}
+              onChange={(e) => {
+                setPasscode(e.target.value);
+                setPinError('');
+              }}
+              className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm focus:border-amber-400 focus:outline-none"
+            />
+          </div>
+
+          {pinError && (
+            <p className="text-xs text-rose-400 font-semibold">{pinError}</p>
+          )}
+
+          <button
+            type="submit"
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-bold text-xs uppercase tracking-wider shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Desbloquear Painel</span>
+          </button>
+        </form>
+
+        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-400">
           Sessão atual: <strong className="text-amber-400">{currentUser?.email || 'Nenhuma (Visitante)'}</strong>
         </div>
       </div>
@@ -453,7 +534,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
             {t('admin.portal_title')}
           </h1>
           <p className="text-xs text-slate-300 mt-1">
-            Super Administrador: <strong className="text-amber-400">{currentUser?.email || 'manuelngovene794@gmail.com'}</strong>
+            Super Administrador: <strong className="text-amber-400">{currentUser?.email || 'admin@earnworld.com'}</strong>
           </p>
         </div>
 
@@ -532,11 +613,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
       {/* Admin Tabs Bar */}
       <div className="flex items-center gap-2 border-b border-slate-800 overflow-x-auto pb-2">
         {[
+          { id: 'revenue', label: 'Fundo de Pagamentos', icon: DollarSign },
           { id: 'withdrawals', label: `${t('admin.withdrawals_tab')} (${withdrawals.length})`, icon: Wallet },
+          { id: 'notifications', label: `Notificações & Avisos (${allNotifications.length})`, icon: Bell },
           { id: 'users', label: `${t('admin.users_tab')} (${users.length})`, icon: Users },
           { id: 'tasks', label: `Tarefas & Recompensas (${tasks.length})`, icon: ListTodo },
           { id: 'methods', label: `Métodos de Pagamento (${paymentMethods.length})`, icon: CreditCard },
-          { id: 'revenue', label: 'Fundo de Pagamentos', icon: DollarSign },
           { id: 'settings', label: t('admin.config_tab'), icon: Settings },
           { id: 'fraud', label: t('admin.fraud_tab'), icon: ShieldAlert },
         ].map(item => {
@@ -1036,7 +1118,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-white text-sm">{m.name}</span>
-                      {m.supportedCountries.includes('MZ') && <span>🇲🇿</span>}
                     </div>
                     <button
                       onClick={() => handleToggleMethod(m.id)}
@@ -1061,7 +1142,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
 
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-400">Moeda de Liquidação:</span>
-                    <span className="text-white font-bold">{m.currencyTarget} {m.currencyTarget === 'MZN' ? `(Taxa: ${usdMznRate} MT / $1)` : ''}</span>
+                    <span className="text-white font-bold">{m.currencyTarget}</span>
                   </div>
 
                   <div className="text-[11px] text-slate-500">
@@ -1194,7 +1275,154 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ config, onUpdateConfig }
         </div>
       )}
 
-      {/* TAB 4: SETTINGS & EXCHANGE RATE */}
+      {/* TAB: NOTIFICATIONS & ANNOUNCEMENTS BROADCASTER */}
+      {activeTab === 'notifications' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Broadcaster Form */}
+          <div className="lg:col-span-1 p-6 rounded-2xl bg-slate-900 border border-amber-500/30 space-y-4 shadow-xl">
+            <div className="flex items-center gap-2 text-amber-400 font-bold text-sm uppercase tracking-wider">
+              <Bell className="w-5 h-5" />
+              <span>Criar Notificação / Aviso</span>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Envie alertas em tempo real sobre novas tarefas, novidades, avisos de fundos ou saques para todos os utilizadores da plataforma.
+            </p>
+
+            <form onSubmit={handleBroadcastNotification} className="space-y-3.5 pt-2">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Tipo de Notificação:</label>
+                <select
+                  value={notifType}
+                  onChange={(e) => setNotifType(e.target.value as any)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-bold"
+                >
+                  <option value="announcement">🛡️ Aviso Importante / Fundo</option>
+                  <option value="task">📋 Nova Tarefa / Pesquisa</option>
+                  <option value="news">🎉 Novidade da Plataforma</option>
+                  <option value="reward">💰 Recompensa Especial</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Título do Aviso:</label>
+                <input
+                  type="text"
+                  placeholder="Ex: 📋 Novas Tarefas Adicionadas!"
+                  value={notifTitle}
+                  onChange={(e) => setNotifTitle(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-medium focus:border-amber-400 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Mensagem para os Utilizadores:</label>
+                <textarea
+                  rows={3}
+                  placeholder="Ex: Novas pesquisas foram liberadas no mural. Complete e ganhe pontos imediatamente..."
+                  value={notifMessage}
+                  onChange={(e) => setNotifMessage(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-medium focus:border-amber-400 focus:outline-none resize-none"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Página de Destino ao Clicar:</label>
+                <select
+                  value={notifTab}
+                  onChange={(e) => setNotifTab(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs"
+                >
+                  <option value="earn">Ganhar Pontos (Mural de Tarefas)</option>
+                  <option value="withdraw">Levantamentos</option>
+                  <option value="balance">Saldo & Extrato</option>
+                  <option value="history">Histórico</option>
+                  <option value="dashboard">Início / Painel</option>
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
+              >
+                <Send className="w-4 h-4" />
+                <span>Transmitir para Todos</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Existing Notifications Feed */}
+          <div className="lg:col-span-2 p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Bell className="w-4 h-4 text-amber-400" />
+                <span>Histórico de Notificações Ativas ({allNotifications.length})</span>
+              </h3>
+              <button
+                onClick={async () => {
+                  const list = await storageService.getNotifications('all');
+                  setAllNotifications(list);
+                  showToast('Notificações atualizadas!');
+                }}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs flex items-center gap-1"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Atualizar</span>
+              </button>
+            </div>
+
+            {allNotifications.length === 0 ? (
+              <div className="p-8 text-center rounded-xl bg-slate-950/60 border border-slate-800 text-slate-400 text-xs">
+                Nenhuma notificação registada no sistema.
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[550px] overflow-y-auto pr-1">
+                {allNotifications.map((notif) => (
+                  <div
+                    key={notif.id}
+                    className="p-4 rounded-xl bg-slate-950 border border-slate-800/80 hover:border-amber-500/30 transition-all flex items-start justify-between gap-3"
+                  >
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                          notif.type === 'task' ? 'bg-amber-500/20 text-amber-400' :
+                          notif.type === 'withdrawal' ? 'bg-emerald-500/20 text-emerald-400' :
+                          notif.type === 'announcement' ? 'bg-indigo-500/20 text-indigo-400' :
+                          'bg-yellow-500/20 text-yellow-400'
+                        }`}>
+                          {notif.type}
+                        </span>
+                        <span className="text-xs font-bold text-white">{notif.title}</span>
+                        <span className="text-[10px] text-slate-500">
+                          {new Date(notif.createdAt).toLocaleDateString()} {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 leading-relaxed">
+                        {notif.message}
+                      </p>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-3">
+                        <span>Destinatário: <strong className="text-slate-400">{notif.userId === 'all' ? 'Todos os utilizadores' : `User ${notif.userId.slice(-6)}`}</strong></span>
+                        {notif.linkTab && <span>Destino: <strong className="text-amber-400">{notif.linkTab}</strong></span>}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleDeleteNotification(notif.id)}
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                      title="Apagar notificação"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: SETTINGS */}
       {activeTab === 'settings' && (
         <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5 max-w-2xl">
           <h3 className="text-base font-bold text-white flex items-center gap-2">

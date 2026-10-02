@@ -41,7 +41,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ config, setActiveTab }) => {
     },
     {
       q: '2. Quais são os métodos de levantamento disponíveis?',
-      a: 'Os pagamentos são efetuados via PayPal, Payoneer, USDT (criptomoeda na rede TRC-20 ou BEP-20) e Transferência Bancária Internacional. Todos os utilizadores em qualquer país têm acesso a estes métodos.'
+      a: 'Os pagamentos são efetuados via PayPal, Payoneer e USDT (criptomoeda na rede TRC-20 ou BEP-20). Todos os utilizadores têm acesso direto a estes métodos confiáveis.'
     },
     {
       q: '3. Qual é a regra dos 3 dias e valor mínimo de levantamento?',
@@ -244,7 +244,7 @@ export const HelpPage: React.FC<HelpPageProps> = ({ config, setActiveTab }) => {
           <span>Canais Oficiais de Atendimento</span>
         </div>
         <p className="leading-relaxed">
-          Suporte Oficial por Email: <strong className="text-slate-200">suporte@earnworld.com</strong> ou contacto com o gestor principal: <strong className="text-amber-400">manuelngovene794@gmail.com</strong>.
+          Suporte Oficial por Email: <strong className="text-slate-200">suporte@earnworld.com</strong>.
         </p>
         <p>
           Atendimento a utilizadores de Moçambique e internacional de Segunda a Domingo.

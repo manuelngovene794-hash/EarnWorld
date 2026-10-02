@@ -109,7 +109,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             
             <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
               Complete pesquisas, ofertas, assista a anúncios voluntários e convide amigos.
-              Levante através de <strong className="text-amber-300">PayPal</strong>, <strong className="text-amber-300">Payoneer</strong>, <strong className="text-amber-300">USDT</strong> ou <strong className="text-amber-300">Transferência Bancária</strong>.
+              Levante através de <strong className="text-amber-300">PayPal</strong>, <strong className="text-amber-300">Payoneer</strong> ou <strong className="text-amber-300">USDT</strong>.
             </p>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1 text-xs text-slate-400">

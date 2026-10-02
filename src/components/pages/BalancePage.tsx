@@ -263,7 +263,7 @@ export const BalancePage: React.FC<BalancePageProps> = ({
           Os pontos são recompensas internas atribuídas após a validação de tarefas, pesquisas e anúncios. O EarnWorld financia todos os levantamentos através de receitas reais líquidas obtidas de parceiros anunciantes. O usuário pode sacar após 3 dias do cadastro, sempre que tiver saldo suficiente e houver fundos disponíveis.
         </p>
         <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-slate-400 border-t border-slate-800">
-          <span>Pagamentos via PayPal, Payoneer, USDT e Transferência Bancária sem taxas ocultas.</span>
+          <span>Pagamentos via PayPal, Payoneer e USDT sem taxas ocultas. 1.000 Pontos = US$ 1,00.</span>
           <div className="flex items-center gap-4 shrink-0">
             <button
               onClick={() => setActiveTab('history')}

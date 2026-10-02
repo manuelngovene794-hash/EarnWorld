@@ -22,6 +22,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { AppConfig } from '../types';
+import { NotificationCenter } from './NotificationCenter';
 
 interface NavbarProps {
   activeTab: string;
@@ -38,7 +39,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAuth,
   onOpenAdModal
 }) => {
-  const { currentUser, logout, quickLoginAsDemoUser } = useAuth();
+  const { currentUser, logout } = useAuth();
   const { lang, setLang, t } = useLanguage();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
@@ -52,7 +53,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'earn', num: '2', label: t('nav.earn') || 'Ganhar Pontos', desc: 'Pesquisas, ofertas, anúncios e check-in', icon: Coins, badge: 'Popular' },
     { id: 'referrals', num: '3', label: t('nav.referrals') || 'Indicar Amigos', desc: 'Código e link de convite (+200 pts)', icon: Users, badge: '+200 pts' },
     { id: 'balance', num: '4', label: t('nav.balance') || 'Saldo', desc: 'Pontos acumulados e carteira em USD', icon: TrendingUp },
-    { id: 'withdraw', num: '5', label: t('nav.withdraw') || 'Levantamento', desc: 'PayPal, Payoneer, USDT, Transferência', icon: Wallet },
+    { id: 'withdraw', num: '5', label: t('nav.withdraw') || 'Levantamento', desc: 'PayPal, Payoneer e USDT', icon: Wallet },
     { id: 'history', num: '6', label: t('nav.history') || 'Histórico', desc: 'Ganhos e levantamentos', icon: Clock },
     { id: 'profile', num: '7', label: t('nav.profile') || 'Perfil / Definições', desc: 'Dados, país e idioma', icon: User },
     { id: 'help', num: '8', label: t('nav.help') || 'Ajuda & Suporte', desc: 'Perguntas frequentes e apoio', icon: HelpCircle },
@@ -205,6 +206,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
               ) : null}
 
+              {/* Notification Center */}
+              <NotificationCenter onNavigateTab={handleNavClick} />
+
               {/* User Profile / Auth Button */}
               {currentUser ? (
                 <div className="relative">
@@ -227,11 +231,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       <div className="px-3 py-2 border-b border-slate-800 mb-1">
                         <p className="text-sm font-semibold text-white truncate">{currentUser.displayName}</p>
                         <p className="text-xs text-slate-400 truncate">{currentUser.email}</p>
-                        <div className="mt-2 flex items-center justify-between text-xs pt-1 border-t border-slate-800/80">
-                          <span className="text-slate-400">País:</span>
-                          <span className="text-amber-400 font-semibold">{currentUser.country === 'MZ' ? '🇲🇿 Moçambique' : currentUser.country}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs mt-1">
+                        <div className="flex items-center justify-between text-xs mt-2 pt-1 border-t border-slate-800/80">
                           <span className="text-slate-400">Convite:</span>
                           <span className="text-amber-300 font-mono font-bold">{currentUser.referralCode}</span>
                         </div>
@@ -269,15 +269,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <span>{t('nav.help') || 'Ajuda & Suporte'}</span>
                       </button>
 
-                      {currentUser.role === 'admin' && (
-                        <button
-                          onClick={() => handleNavClick('admin')}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/10 rounded-lg transition-colors"
-                        >
-                          <ShieldCheck className="w-4 h-4 text-amber-400" />
-                          <span>{t('nav.admin') || 'Painel Admin'}</span>
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleNavClick('admin')}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/10 rounded-lg transition-colors"
+                      >
+                        <ShieldCheck className="w-4 h-4 text-amber-400" />
+                        <span>Painel do Administrador</span>
+                      </button>
 
                       <div className="pt-1 mt-1 border-t border-slate-800">
                         <button
@@ -302,13 +300,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   >
                     <LogIn className="w-4 h-4" />
                     <span>{t('nav.login')}</span>
-                  </button>
-                  <button
-                    onClick={() => quickLoginAsDemoUser('MZ')}
-                    className="hidden sm:inline-flex text-xs px-2.5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-amber-400 hover:border-amber-500/30 transition-colors"
-                    title="Aceder em modo demonstração (Moçambique)"
-                  >
-                    Demo MZ 🇲🇿
                   </button>
                 </div>
               )}
@@ -391,32 +382,17 @@ export const Navbar: React.FC<NavbarProps> = ({
               })}
             </div>
 
-            {/* Admin option if admin */}
-            {currentUser?.role === 'admin' && (
-              <button
-                onClick={() => handleNavClick('admin')}
-                className="w-full flex items-center justify-between p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs font-bold"
-              >
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-red-400" />
-                  <span>Painel do Administrador (/admin)</span>
-                </div>
-                <span>Aceder</span>
-              </button>
-            )}
-
-            {/* If logged out, demo MZ option */}
-            {!currentUser && (
-              <button
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  quickLoginAsDemoUser('MZ');
-                }}
-                className="w-full py-3 px-3 rounded-xl bg-slate-900 border border-amber-500/30 text-xs font-bold text-amber-300 text-center"
-              >
-                🇲🇿 Entrar no Modo Demo Moçambique
-              </button>
-            )}
+            {/* Admin option */}
+            <button
+              onClick={() => handleNavClick('admin')}
+              className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-amber-500/20 text-xs font-bold text-amber-300"
+            >
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-amber-400" />
+                <span>Painel do Administrador (/admin)</span>
+              </div>
+              <span className="text-[11px] text-slate-400">Aceder</span>
+            </button>
           </div>
         )}
       </header>

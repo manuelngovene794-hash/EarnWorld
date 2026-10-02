@@ -28,8 +28,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     loginWithEmail, 
     registerWithEmail, 
     registerWithPhone,
-    resetPassword,
-    quickLoginAsDemoUser
+    resetPassword
   } = useAuth();
   const { t } = useLanguage();
 
@@ -448,20 +447,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             </button>
           </form>
         )}
-
-        {/* Super Admin Quick Testing */}
-        <div className="mt-5 pt-4 border-t border-slate-800 text-center">
-          <button
-            type="button"
-            onClick={async () => {
-              await quickLoginAsDemoUser('MZ');
-              onClose();
-            }}
-            className="text-xs text-amber-400/90 hover:text-amber-300 hover:underline font-semibold"
-          >
-            ⚡ Entrar como Manuel Ngovene (Admin / Teste de Levantamento)
-          </button>
-        </div>
 
       </div>
     </div>

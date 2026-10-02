@@ -263,7 +263,6 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onOpenAuth, setActiveT
                   <div className="text-right shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800">
                     <p className="text-base font-black text-rose-400">-{w.pointsDeducted.toLocaleString()} PTS</p>
                     <p className="text-xs font-bold text-white">US$ {w.amountUsd.toFixed(2)}</p>
-                    <p className="text-xs text-emerald-400 font-semibold">{w.amountMzn.toFixed(2)} MT</p>
                   </div>
                 </div>
               ))}

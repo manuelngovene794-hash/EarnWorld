@@ -94,25 +94,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAuth();
   }, []);
 
-  const loginWithGoogle = async () => {
-    // Direct in-app Google login without external popup block / domain authorization requirements
-    const googleEmail = 'manuelngovene794@gmail.com';
+  const loginWithGoogle = async (customEmail?: string) => {
+    // Direct in-app Google login for regular users
+    const googleEmail = (customEmail?.trim().toLowerCase()) || 'utilizador.google@earnworld.com';
     let profile = await storageService.findUserByEmail(googleEmail);
     if (!profile) {
       const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
-      // Default created 5 days ago so admin can test withdrawals immediately
-      const createdDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+      const createdDate = new Date().toISOString();
+      const isAdmin = ADMIN_EMAILS.includes(googleEmail);
       profile = {
-        id: 'usr_google_admin_794',
+        id: 'usr_g_' + Math.random().toString(36).substring(2, 9),
         email: googleEmail,
-        displayName: 'Manuel Ngovene',
-        country: 'MZ',
+        displayName: isAdmin ? 'Administrador' : 'Utilizador Google',
+        country: 'Global',
         referralCode: generatedRefCode,
-        pointsBalance: 6500,
-        totalEarnedPoints: 12500,
+        pointsBalance: 200,
+        totalEarnedPoints: 200,
         totalWithdrawnPoints: 0,
-        role: 'admin',
-        consecutiveCheckIns: 4,
+        role: isAdmin ? 'admin' : 'user',
+        consecutiveCheckIns: 1,
         createdAt: createdDate
       };
       await storageService.saveUserProfile(profile);
@@ -310,21 +310,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await storageService.saveUserCredentials(cleanEmail, user.id, salt, passwordHash);
   };
 
-  const quickLoginAsDemoUser = async (country = 'MZ') => {
-    const demoId = 'user_mozambique_preview';
-    // Created 5 days ago to allow withdrawal testing without waiting 3 days
+  const quickLoginAsDemoUser = async (country = 'Global') => {
+    const demoId = 'user_demo_preview';
     const createdDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
     const demoProfile: UserProfile = {
       id: demoId,
-      email: 'manuelngovene794@gmail.com',
-      displayName: 'Manuel Ngovene',
-      phoneNumber: '+258 84 123 4567',
+      email: 'utilizador.teste@earnworld.com',
+      displayName: 'Utilizador Convidado',
+      phoneNumber: '+1 555 123 4567',
       country: country,
-      referralCode: 'EWMOZ794',
-      pointsBalance: 6500, // >= 5000 pts ($6.50)
+      referralCode: 'EWTESTE',
+      pointsBalance: 6500,
       totalEarnedPoints: 12500,
       totalWithdrawnPoints: 6000,
-      role: 'admin',
+      role: 'user',
       consecutiveCheckIns: 3,
       createdAt: createdDate
     };

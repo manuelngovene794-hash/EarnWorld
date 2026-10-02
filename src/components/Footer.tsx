@@ -98,16 +98,10 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               Métodos de Pagamento
             </h4>
             <ul className="text-xs text-slate-400 space-y-1.5">
-              <li className="flex items-center gap-1.5">
-                <span>🇲🇿 M-Pesa (Vodacom Moçambique)</span>
-              </li>
-              <li className="flex items-center gap-1.5">
-                <span>🇲🇿 e-Mola (Movitel Moçambique)</span>
-              </li>
               <li>PayPal (Dólares USD)</li>
               <li>Payoneer (Dólares USD)</li>
               <li>USDT (TRC-20 & BEP-20)</li>
-              <li>Transferência Bancária (BIM, BCI)</li>
+              <li>Liquidação Segura Direta</li>
             </ul>
           </div>
 

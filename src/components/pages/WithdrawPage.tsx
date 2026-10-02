@@ -201,7 +201,6 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
         country: userCountry,
         pointsDeducted: pointsToWithdraw,
         amountUsd: Number(amountUsd.toFixed(2)),
-        amountMzn: 0,
         paymentMethod: selectedMethodId,
         accountDetails: accountSummary,
         accountName: fieldValues['name'] || fieldValues['holder'] || currentUser!.displayName || currentUser!.email,
@@ -251,7 +250,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
               Solicitar <span className="bg-gradient-to-r from-amber-400 to-yellow-300 bg-clip-text text-transparent">Levantamento</span>
             </h1>
             <p className="text-sm text-slate-300 mt-1 max-w-2xl leading-relaxed">
-              Converta os seus pontos ganhos em pagamentos reais via PayPal, Payoneer, USDT ou Transferência Bancária. Mínimo de 5.000 pontos (US$ 5,00).
+              Converta os seus pontos ganhos em pagamentos reais via PayPal, Payoneer ou USDT. Mínimo de 5.000 pontos (US$ 5,00). Regra de conversão: 1.000 pontos = US$ 1,00.
             </p>
           </div>
 

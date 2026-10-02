@@ -147,7 +147,6 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
         country: userCountry,
         pointsDeducted: pointsToWithdraw,
         amountUsd: Number(amountUsd.toFixed(2)),
-        amountMzn: 0,
         paymentMethod: selectedMethodId,
         accountDetails: accountSummary,
         accountName: fieldValues['name'] || fieldValues['holder'] || currentUser.displayName,
