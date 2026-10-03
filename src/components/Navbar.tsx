@@ -269,13 +269,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <span>{t('nav.help') || 'Ajuda & Suporte'}</span>
                       </button>
 
-                      <button
-                        onClick={() => handleNavClick('admin')}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/10 rounded-lg transition-colors"
-                      >
-                        <ShieldCheck className="w-4 h-4 text-amber-400" />
-                        <span>Painel do Administrador</span>
-                      </button>
+                      {currentUser?.role === 'admin' && (
+                        <button
+                          onClick={() => handleNavClick('admin')}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/10 rounded-lg transition-colors"
+                        >
+                          <ShieldCheck className="w-4 h-4 text-amber-400" />
+                          <span>Painel do Administrador</span>
+                        </button>
+                      )}
 
                       <div className="pt-1 mt-1 border-t border-slate-800">
                         <button
@@ -382,17 +384,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               })}
             </div>
 
-            {/* Admin option */}
-            <button
-              onClick={() => handleNavClick('admin')}
-              className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-amber-500/20 text-xs font-bold text-amber-300"
-            >
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-amber-400" />
-                <span>Painel do Administrador (/admin)</span>
-              </div>
-              <span className="text-[11px] text-slate-400">Aceder</span>
-            </button>
+            {/* Admin option (only visible for admins) */}
+            {currentUser?.role === 'admin' && (
+              <button
+                onClick={() => handleNavClick('admin')}
+                className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-amber-500/20 text-xs font-bold text-amber-300"
+              >
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-amber-400" />
+                  <span>Painel do Administrador (/admin)</span>
+                </div>
+                <span className="text-[11px] text-slate-400">Aceder</span>
+              </button>
+            )}
           </div>
         )}
       </header>

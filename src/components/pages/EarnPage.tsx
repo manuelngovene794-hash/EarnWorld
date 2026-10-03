@@ -128,9 +128,17 @@ export const EarnPage: React.FC<EarnPageProps> = ({
     setSurveyResponse('');
     setOfferConfirmed(false);
 
-    // Check if task session already exists
-    const session = await storageService.getTaskSession(currentUser.id, task.id);
-    setActiveSession(session);
+    // Automatically create a valid active task session upon opening and maintain it throughout the questionnaire
+    try {
+      let session = await storageService.getTaskSession(currentUser.id, task.id);
+      if (!session || session.status !== 'in_progress') {
+        session = await storageService.startTaskSession(currentUser.id, task.id);
+      }
+      setActiveSession(session);
+      setUserTaskSessions(prev => ({ ...prev, [task.id]: session }));
+    } catch (e: any) {
+      console.warn('Session startup notice:', e);
+    }
   };
 
   // 1. START TASK: Never awards points upon starting! Creates a real session.
@@ -153,20 +161,34 @@ export const EarnPage: React.FC<EarnPageProps> = ({
   // 2. VALIDATE & COMPLETE TASK: Real validation without artificial wait timers!
   const handleConfirmTaskCompletion = async () => {
     if (!selectedTask || !currentUser) return;
+
+    if (selectedTask.category === 'survey') {
+      if (!surveyResponse) {
+        setTaskErrorMessage('Por favor, selecione uma resposta válida para a pesquisa antes de submeter.');
+        return;
+      }
+    } else {
+      if (!offerConfirmed) {
+        setTaskErrorMessage('Por favor, confirme a conclusão dos passos do parceiro.');
+        return;
+      }
+    }
+
     setIsCompleting(true);
     setTaskErrorMessage('');
 
     try {
+      // Recognize active session and maintain continuity
+      let currentSession = activeSession;
+      if (!currentSession || currentSession.status !== 'in_progress') {
+        currentSession = await storageService.startTaskSession(currentUser.id, selectedTask.id);
+        setActiveSession(currentSession);
+      }
+
       const userAnswers: Record<string, string> = {};
       if (selectedTask.category === 'survey') {
-        if (!surveyResponse) {
-          throw new Error('Por favor, selecione uma resposta para a pesquisa antes de submeter.');
-        }
         userAnswers['opinion'] = surveyResponse;
       } else {
-        if (!offerConfirmed) {
-          throw new Error('Por favor, confirme a conclusão dos passos do parceiro.');
-        }
         userAnswers['confirmed'] = 'true';
       }
 

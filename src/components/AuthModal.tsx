@@ -222,7 +222,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                     <input
                       type="text"
                       required
-                      placeholder="Ex: Manuel António"
+                      placeholder="O seu nome completo"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-amber-400 focus:outline-none"
@@ -424,7 +424,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               <label className="text-xs font-medium text-slate-400">O Seu Nome</label>
               <input
                 type="text"
-                placeholder="Ex: Manuel António"
+                placeholder="O seu nome completo"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs"

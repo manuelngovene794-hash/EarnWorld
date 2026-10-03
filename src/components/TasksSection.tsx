@@ -100,8 +100,17 @@ export const TasksSection: React.FC<TasksSectionProps> = ({
     setCompletionSuccess(false);
     setTaskErrorMessage('');
 
-    const session = await storageService.getTaskSession(currentUser.id, task.id);
-    setActiveSession(session);
+    // Automatically create a valid active task session upon opening and maintain it throughout the questionnaire
+    try {
+      let session = await storageService.getTaskSession(currentUser.id, task.id);
+      if (!session || session.status !== 'in_progress') {
+        session = await storageService.startTaskSession(currentUser.id, task.id);
+      }
+      setActiveSession(session);
+      setUserTaskSessions(prev => ({ ...prev, [task.id]: session }));
+    } catch (e: any) {
+      console.warn('Session startup notice:', e);
+    }
   };
 
   const handleStartTask = async () => {
@@ -122,20 +131,34 @@ export const TasksSection: React.FC<TasksSectionProps> = ({
 
   const handleCompleteTask = async () => {
     if (!activeModalTask || !currentUser) return;
+
+    if (activeModalTask.category === 'survey') {
+      if (!surveyResponse) {
+        setTaskErrorMessage('Por favor, selecione uma resposta válida para a pesquisa antes de submeter.');
+        return;
+      }
+    } else {
+      if (!partnerStepConfirmed) {
+        setTaskErrorMessage('Por favor, confirme que completou as instruções do parceiro.');
+        return;
+      }
+    }
+
     setIsCompleting(true);
     setTaskErrorMessage('');
 
     try {
+      // Recognize active session and maintain continuity
+      let currentSession = activeSession;
+      if (!currentSession || currentSession.status !== 'in_progress') {
+        currentSession = await storageService.startTaskSession(currentUser.id, activeModalTask.id);
+        setActiveSession(currentSession);
+      }
+
       const answers: Record<string, string> = {};
       if (activeModalTask.category === 'survey') {
-        if (!surveyResponse) {
-          throw new Error('Por favor, selecione uma resposta válida para a pesquisa.');
-        }
         answers['response'] = surveyResponse;
       } else {
-        if (!partnerStepConfirmed) {
-          throw new Error('Por favor, confirme que completou as instruções do parceiro.');
-        }
         answers['confirmed'] = 'true';
       }
 
@@ -464,7 +487,7 @@ export const TasksSection: React.FC<TasksSectionProps> = ({
                     ) : (
                       <>
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>Submeter & Reclamar Pontos (+{activeModalTask.rewardPoints} PTS)</span>
+                        <span>Validar & Receber (+{activeModalTask.rewardPoints} PTS)</span>
                       </>
                     )}
                   </button>
