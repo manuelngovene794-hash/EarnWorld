@@ -100,6 +100,37 @@
         "createdAt": { "type": "string" }
       },
       "required": ["userId", "type", "points", "status", "createdAt"]
+    },
+    "TaskSession": {
+      "title": "TaskSession",
+      "description": "Real active task session tracking user qualification and preventing duplicates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "taskTitle": { "type": "string" },
+        "rewardPoints": { "type": "number" },
+        "startedAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["in_progress", "completed", "abandoned"] },
+        "credited": { "type": "boolean" },
+        "completedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "taskId", "status"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "System broadcast notification or announcement",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["info", "success", "warning", "announcement"] },
+        "targetUser": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "message", "type", "createdAt"]
     }
   },
   "firestore": {
@@ -122,6 +153,14 @@
     "/transactions/{transactionId}": {
       "schema": "Transaction",
       "description": "Audit trail ledger of point activity"
+    },
+    "/task_sessions/{sessionId}": {
+      "schema": "TaskSession",
+      "description": "Active task qualification sessions"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Platform announcements and user notifications"
     }
   }
 }

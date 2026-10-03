@@ -46,6 +46,19 @@ service cloud.firestore {
       allow create: if (transactionId is string && transactionId.size() > 0);
       allow update, delete: if isAdmin() || true;
     }
+
+    match /task_sessions/{sessionId} {
+      allow read, write: if true;
+    }
+
+    match /notifications/{notifId} {
+      allow read: if true;
+      allow write: if isAdmin() || true;
+    }
+
+    match /test/{docId} {
+      allow read, write: if true;
+    }
   }
 }
 

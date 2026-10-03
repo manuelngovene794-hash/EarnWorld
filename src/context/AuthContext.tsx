@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile } from '../types';
 import { storageService } from '../services/storageService';
+import { auth, googleProvider } from '../firebase';
+import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
 const ADMIN_EMAILS = ['manuelngovene794@gmail.com', 'admin@earnworld.com'];
 
@@ -16,7 +18,7 @@ async function computeHash(text: string, salt: string): Promise<string> {
 
 interface AuthContextType {
   currentUser: UserProfile | null;
-  firebaseUser: any | null;
+  firebaseUser: FirebaseUser | null;
   loading: boolean;
   loginWithGoogle: () => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
@@ -48,79 +50,177 @@ const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Initialize session on mount
+  // Initialize and observe real Firebase Authentication session
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        // 1. Check active session
-        const activeSession = localStorage.getItem('earnworld_active_session');
-        if (activeSession) {
-          try {
-            const { uid, email } = JSON.parse(activeSession);
-            let profile = await storageService.getUserProfile(uid);
-            if (!profile && email) {
-              profile = await storageService.findUserByEmail(email);
-            }
-            if (profile) {
-              setCurrentUser(profile);
-              localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
-              setLoading(false);
-              return;
-            }
-          } catch (e) {
-            console.warn('Session parse warning:', e);
-          }
+    // 1. Purge any legacy demo user session to guarantee 100% real user accounts
+    try {
+      const activeSession = localStorage.getItem('earnworld_active_session');
+      if (activeSession) {
+        const parsed = JSON.parse(activeSession);
+        if (parsed.uid === 'user_demo_preview' || parsed.email === 'utilizador.teste@earnworld.com') {
+          localStorage.removeItem('earnworld_active_session');
+          localStorage.removeItem('earnworld_user_cache');
+          localStorage.removeItem('earnworld_demo_session');
         }
-
-        // 2. Fallback to cache if available
-        const cached = localStorage.getItem('earnworld_user_cache');
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            if (parsed && parsed.id) {
-              setCurrentUser(parsed);
-            }
-          } catch (e) {
-            // ignore
-          }
-        }
-      } finally {
-        setLoading(false);
       }
-    };
-
-    initAuth();
-  }, []);
-
-  const loginWithGoogle = async (customEmail?: string) => {
-    // Direct in-app Google login for regular users
-    const googleEmail = (customEmail?.trim().toLowerCase()) || 'utilizador.google@earnworld.com';
-    let profile = await storageService.findUserByEmail(googleEmail);
-    if (!profile) {
-      const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
-      const createdDate = new Date().toISOString();
-      const isAdmin = ADMIN_EMAILS.includes(googleEmail);
-      profile = {
-        id: 'usr_g_' + Math.random().toString(36).substring(2, 9),
-        email: googleEmail,
-        displayName: isAdmin ? 'Administrador' : 'Utilizador Google',
-        country: 'Global',
-        referralCode: generatedRefCode,
-        pointsBalance: 200,
-        totalEarnedPoints: 200,
-        totalWithdrawnPoints: 0,
-        role: isAdmin ? 'admin' : 'user',
-        consecutiveCheckIns: 1,
-        createdAt: createdDate
-      };
-      await storageService.saveUserProfile(profile);
+    } catch (e) {
+      // ignore
     }
 
-    setCurrentUser(profile);
-    localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
-    localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: profile.id, email: profile.email }));
+    // 2. Real-time Firebase Auth listener
+    const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
+      setFirebaseUser(fbUser);
+      if (fbUser && fbUser.email) {
+        const cleanEmail = fbUser.email.toLowerCase().trim();
+        const isAdmin = ADMIN_EMAILS.includes(cleanEmail) || cleanEmail === 'manuelngovene794@gmail.com';
+
+        let profile = await storageService.getUserProfile(fbUser.uid);
+        if (!profile) {
+          profile = await storageService.findUserByEmail(cleanEmail);
+        }
+
+        if (profile) {
+          if (isAdmin && profile.role !== 'admin') {
+            profile.role = 'admin';
+            await storageService.saveUserProfile(profile);
+          }
+          if (fbUser.displayName && (!profile.displayName || profile.displayName.includes('Google') || profile.displayName.includes('Convidado'))) {
+            profile.displayName = fbUser.displayName;
+            await storageService.saveUserProfile(profile);
+          }
+          setCurrentUser(profile);
+          localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
+          localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: profile.id, email: profile.email }));
+        } else {
+          // Provision real profile from Google Account data
+          const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
+          const newProfile: UserProfile = {
+            id: fbUser.uid,
+            email: cleanEmail,
+            displayName: fbUser.displayName || (isAdmin ? 'Administrador' : cleanEmail.split('@')[0]),
+            phoneNumber: fbUser.phoneNumber || '',
+            country: 'MZ',
+            referralCode: generatedRefCode,
+            pointsBalance: 250,
+            totalEarnedPoints: 250,
+            totalWithdrawnPoints: 0,
+            role: isAdmin ? 'admin' : 'user',
+            consecutiveCheckIns: 1,
+            createdAt: new Date().toISOString()
+          };
+          await storageService.saveUserProfile(newProfile);
+          await storageService.addTransaction({
+            userId: fbUser.uid,
+            type: 'bonus',
+            points: 250,
+            amountUsd: 0.25,
+            description: 'Bónus de Boas-Vindas Google Sign-In',
+            status: 'completed',
+            createdAt: new Date().toISOString()
+          });
+          setCurrentUser(newProfile);
+          localStorage.setItem('earnworld_user_cache', JSON.stringify(newProfile));
+          localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: newProfile.id, email: newProfile.email }));
+        }
+        setLoading(false);
+      } else {
+        // If not authenticated via Google, check direct credentials session
+        try {
+          const activeSession = localStorage.getItem('earnworld_active_session');
+          if (activeSession) {
+            const { uid, email } = JSON.parse(activeSession);
+            if (uid && uid !== 'user_demo_preview') {
+              let profile = await storageService.getUserProfile(uid);
+              if (!profile && email) {
+                profile = await storageService.findUserByEmail(email);
+              }
+              if (profile) {
+                setCurrentUser(profile);
+              }
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  // REAL Google Authentication using GoogleAuthProvider & signInWithPopup
+  const loginWithGoogle = async () => {
+    try {
+      const userCredential = await signInWithPopup(auth, googleProvider);
+      const fbUser = userCredential.user;
+      if (!fbUser || !fbUser.email) {
+        throw new Error('Falha ao autenticar com a conta Google.');
+      }
+
+      const cleanEmail = fbUser.email.toLowerCase().trim();
+      const isAdmin = ADMIN_EMAILS.includes(cleanEmail) || cleanEmail === 'manuelngovene794@gmail.com';
+
+      let profile = await storageService.getUserProfile(fbUser.uid);
+      if (!profile) {
+        profile = await storageService.findUserByEmail(cleanEmail);
+      }
+
+      if (!profile) {
+        const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
+        profile = {
+          id: fbUser.uid,
+          email: cleanEmail,
+          displayName: fbUser.displayName || (isAdmin ? 'Administrador' : cleanEmail.split('@')[0]),
+          phoneNumber: fbUser.phoneNumber || '',
+          country: 'MZ',
+          referralCode: generatedRefCode,
+          pointsBalance: 250,
+          totalEarnedPoints: 250,
+          totalWithdrawnPoints: 0,
+          role: isAdmin ? 'admin' : 'user',
+          consecutiveCheckIns: 1,
+          createdAt: new Date().toISOString()
+        };
+        await storageService.saveUserProfile(profile);
+
+        await storageService.addTransaction({
+          userId: fbUser.uid,
+          type: 'bonus',
+          points: 250,
+          amountUsd: 0.25,
+          description: 'Bónus de Boas-Vindas Google Sign-In',
+          status: 'completed',
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        if (isAdmin && profile.role !== 'admin') {
+          profile.role = 'admin';
+        }
+        if (fbUser.displayName && (!profile.displayName || profile.displayName.includes('Google') || profile.displayName.includes('Convidado'))) {
+          profile.displayName = fbUser.displayName;
+        }
+        await storageService.saveUserProfile(profile);
+      }
+
+      setCurrentUser(profile);
+      setFirebaseUser(fbUser);
+      localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
+      localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: profile.id, email: profile.email }));
+    } catch (err: any) {
+      console.error('Google Sign-In Error:', err);
+      if (err.code === 'auth/popup-closed-by-user') {
+        throw new Error('Janela do Google foi fechada antes de concluir.');
+      } else if (err.code === 'auth/popup-blocked') {
+        throw new Error('O navegador bloqueou o popup do Google. Permita popups para este site.');
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        return;
+      }
+      throw new Error(err.message || 'Erro ao realizar login com o Google.');
+    }
   };
 
   const loginWithEmail = async (email: string, pass: string) => {
@@ -310,31 +410,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await storageService.saveUserCredentials(cleanEmail, user.id, salt, passwordHash);
   };
 
-  const quickLoginAsDemoUser = async (country = 'Global') => {
-    const demoId = 'user_demo_preview';
-    const createdDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
-    const demoProfile: UserProfile = {
-      id: demoId,
-      email: 'utilizador.teste@earnworld.com',
-      displayName: 'Utilizador Convidado',
-      phoneNumber: '+1 555 123 4567',
-      country: country,
-      referralCode: 'EWTESTE',
-      pointsBalance: 6500,
-      totalEarnedPoints: 12500,
-      totalWithdrawnPoints: 6000,
-      role: 'user',
-      consecutiveCheckIns: 3,
-      createdAt: createdDate
-    };
-    await storageService.saveUserProfile(demoProfile);
-    setCurrentUser(demoProfile);
-    localStorage.setItem('earnworld_user_cache', JSON.stringify(demoProfile));
-    localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: demoProfile.id, email: demoProfile.email }));
+  const quickLoginAsDemoUser = async (_country = 'Global') => {
+    // Route to real Google authentication instead of mock demo user
+    await loginWithGoogle();
   };
 
   const logout = async () => {
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.warn('SignOut warning:', e);
+    }
     setCurrentUser(null);
+    setFirebaseUser(null);
     localStorage.removeItem('earnworld_active_session');
     localStorage.removeItem('earnworld_demo_session');
     localStorage.removeItem('earnworld_user_cache');

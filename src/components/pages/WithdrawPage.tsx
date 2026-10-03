@@ -71,11 +71,12 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
   const existingPending = userWithdrawals.find(w => w.status === 'pending');
   const hasPendingRequest = Boolean(existingPending);
 
-  // 3-Day Rule Calculation
+  // 3-Day Rule Calculation (admin is immediately eligible for testing real payouts)
+  const isAdminUser = currentUser?.role === 'admin' || currentUser?.email?.toLowerCase() === 'manuelngovene794@gmail.com' || currentUser?.email?.toLowerCase() === 'admin@earnworld.com';
   const createdMs = currentUser?.createdAt ? new Date(currentUser.createdAt).getTime() : Date.now();
   const elapsedMs = Date.now() - createdMs;
   const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-  const isEligibleAfter3Days = elapsedMs >= THREE_DAYS_MS;
+  const isEligibleAfter3Days = isAdminUser || elapsedMs >= THREE_DAYS_MS;
   const remainingMs = Math.max(0, THREE_DAYS_MS - elapsedMs);
   const remainingHours = Math.ceil(remainingMs / (1000 * 60 * 60));
   const remainingDays = Math.ceil(remainingMs / (1000 * 60 * 60 * 24));
@@ -320,7 +321,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
               </div>
               <p className="text-[11px] text-slate-300 leading-tight">
                 {isEligibleAfter3Days 
-                  ? 'Aprovado: Mais de 3 dias desde o registo.' 
+                  ? (isAdminUser ? 'Aprovado: Acesso de Administrador.' : 'Aprovado: Mais de 3 dias desde o registo.') 
                   : `Carência ativa: Liberação em ~${remainingDays > 1 ? `${remainingDays} dias` : `${remainingHours}h`}.`}
               </p>
             </div>

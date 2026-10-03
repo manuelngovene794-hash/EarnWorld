@@ -1,5 +1,65 @@
 import { AppConfig, TaskItem, WithdrawalRequest, Transaction, UserProfile, UserTaskSession, TaskCompletionRecord, AppNotification } from '../types';
 import { DEFAULT_CONFIG, INITIAL_TASKS } from '../data/initialData';
+import { db, auth } from '../firebase';
+import { 
+  collection, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  getDocs, 
+  onSnapshot, 
+  query, 
+  where,
+  deleteDoc
+} from 'firebase/firestore';
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.warn('Firestore Operation handled: ', JSON.stringify(errInfo));
+  return errInfo;
+}
 
 // Local storage helper functions for reliable, domain-independent browser persistence
 function getLocal<T>(key: string, defaultValue: T): T {
@@ -24,6 +84,25 @@ function setLocal<T>(key: string, value: T): void {
 export const storageService = {
   // Global configuration
   async getAppConfig(): Promise<AppConfig> {
+    try {
+      const snap = await getDoc(doc(db, 'app_config', 'global'));
+      if (snap.exists()) {
+        const data = snap.data() as AppConfig;
+        if (data.paymentFundUsd === undefined) {
+          data.paymentFundUsd = data.availableRealRevenueUsd ?? DEFAULT_CONFIG.paymentFundUsd ?? 100;
+        }
+        data.availableRealRevenueUsd = data.paymentFundUsd;
+        setLocal('earnworld_app_config', data);
+        return data;
+      } else {
+        await setDoc(doc(db, 'app_config', 'global'), DEFAULT_CONFIG);
+        setLocal('earnworld_app_config', DEFAULT_CONFIG);
+        return DEFAULT_CONFIG;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, 'app_config/global');
+    }
+
     const local = getLocal<AppConfig>('earnworld_app_config', DEFAULT_CONFIG);
     if (local.paymentFundUsd === undefined) {
       local.paymentFundUsd = local.availableRealRevenueUsd ?? DEFAULT_CONFIG.paymentFundUsd ?? 100;
@@ -41,9 +120,30 @@ export const storageService = {
       updated.paymentFundUsd = updates.availableRealRevenueUsd;
     }
     setLocal('earnworld_app_config', updated);
+
+    try {
+      await setDoc(doc(db, 'app_config', 'global'), updated, { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'app_config/global');
+    }
   },
 
   subscribeAppConfig(callback: (config: AppConfig) => void) {
+    let unsubFirestore: (() => void) | null = null;
+    try {
+      unsubFirestore = onSnapshot(doc(db, 'app_config', 'global'), (snap) => {
+        if (snap.exists()) {
+          const cfg = snap.data() as AppConfig;
+          setLocal('earnworld_app_config', cfg);
+          callback(cfg);
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'app_config/global');
+      });
+    } catch (e) {
+      console.warn('Firestore onSnapshot exception:', e);
+    }
+
     const emit = () => {
       const current = getLocal<AppConfig>('earnworld_app_config', DEFAULT_CONFIG);
       callback(current);
@@ -55,6 +155,7 @@ export const storageService = {
     window.addEventListener('storage', handleSync);
 
     return () => {
+      if (unsubFirestore) unsubFirestore();
       window.removeEventListener('earnworld_storage_sync', handleSync);
       window.removeEventListener('storage', handleSync);
     };
@@ -63,6 +164,16 @@ export const storageService = {
   // Credentials storage for direct email/pass login
   async getUserCredentials(email: string): Promise<{ userId: string; email: string; salt: string; passwordHash: string } | null> {
     const clean = email.trim().toLowerCase();
+    try {
+      const snap = await getDoc(doc(db, 'user_credentials', clean));
+      if (snap.exists()) {
+        const data = snap.data() as any;
+        return data;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, `user_credentials/${clean}`);
+    }
+
     const credsMap = getLocal<Record<string, any>>('earnworld_creds_db', {});
     return credsMap[clean] || null;
   },
@@ -79,10 +190,30 @@ export const storageService = {
     };
     credsMap[clean] = record;
     setLocal('earnworld_creds_db', credsMap);
+
+    try {
+      await setDoc(doc(db, 'user_credentials', clean), record, { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `user_credentials/${clean}`);
+    }
   },
 
   async findUserByEmail(email: string): Promise<UserProfile | null> {
     const clean = email.trim().toLowerCase();
+    try {
+      const q = query(collection(db, 'users'), where('email', '==', clean));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const profile = snap.docs[0].data() as UserProfile;
+        const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
+        usersMap[profile.id] = profile;
+        setLocal('earnworld_users_db', usersMap);
+        return profile;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, 'users');
+    }
+
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
     for (const u of Object.values(usersMap)) {
       if (u.email && u.email.toLowerCase() === clean) {
@@ -94,6 +225,19 @@ export const storageService = {
 
   // User Profile
   async getUserProfile(userId: string): Promise<UserProfile | null> {
+    try {
+      const snap = await getDoc(doc(db, 'users', userId));
+      if (snap.exists()) {
+        const profile = snap.data() as UserProfile;
+        const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
+        usersMap[userId] = profile;
+        setLocal('earnworld_users_db', usersMap);
+        return profile;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, `users/${userId}`);
+    }
+
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
     return usersMap[userId] || null;
   },
@@ -102,6 +246,12 @@ export const storageService = {
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
     usersMap[profile.id] = profile;
     setLocal('earnworld_users_db', usersMap);
+
+    try {
+      await setDoc(doc(db, 'users', profile.id), profile, { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `users/${profile.id}`);
+    }
   },
 
   async updateUserBalance(userId: string, pointsDelta: number, newTotalEarnedDelta = 0): Promise<void> {
@@ -421,17 +571,18 @@ export const storageService = {
       throw new Error(`O levantamento mínimo é de ${minPoints.toLocaleString()} pontos (US$ 5,00).`);
     }
 
-    // 1. RULE: User can only withdraw after 3 days from registration
+    // 1. RULE: User can only withdraw after 3 days from registration (admins exempt for real payout testing)
     const user = await this.getUserProfile(req.userId);
     if (!user) {
       throw new Error('Utilizador não encontrado no sistema.');
     }
 
+    const isAdminUser = user.role === 'admin' || user.email?.toLowerCase() === 'manuelngovene794@gmail.com' || user.email?.toLowerCase() === 'admin@earnworld.com';
     const userCreated = new Date(user.createdAt || Date.now()).getTime();
     const elapsedMs = Date.now() - userCreated;
     const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 
-    if (elapsedMs < THREE_DAYS_MS) {
+    if (!isAdminUser && elapsedMs < THREE_DAYS_MS) {
       const remainingMs = THREE_DAYS_MS - elapsedMs;
       const hoursRemaining = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60)));
       const daysRemaining = Math.ceil(remainingMs / (1000 * 60 * 60 * 24));
@@ -497,9 +648,15 @@ export const storageService = {
       totalWithdrawnPoints: newWithdrawn
     });
 
-    // Store withdrawal record in local storage
+    // Store withdrawal record in local storage and Firestore
     withdrawals.unshift(withdrawal);
     setLocal('earnworld_withdrawals_db', withdrawals);
+
+    try {
+      await setDoc(doc(db, 'withdrawals', id), withdrawal);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, `withdrawals/${id}`);
+    }
 
     // Record ledger transaction
     await this.addTransaction({
@@ -574,6 +731,12 @@ export const storageService = {
     withdrawals[idx] = updated;
     setLocal('earnworld_withdrawals_db', withdrawals);
 
+    try {
+      await setDoc(doc(db, 'withdrawals', withdrawalId), updated, { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `withdrawals/${withdrawalId}`);
+    }
+
     // Notify user of approved withdrawal
     await this.addNotification({
       userId: wth.userId,
@@ -632,6 +795,12 @@ export const storageService = {
     withdrawals[idx] = updated;
     setLocal('earnworld_withdrawals_db', withdrawals);
 
+    try {
+      await setDoc(doc(db, 'withdrawals', withdrawalId), updated, { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `withdrawals/${withdrawalId}`);
+    }
+
     // Notify user of paid withdrawal
     await this.addNotification({
       userId: wth.userId,
@@ -684,6 +853,12 @@ export const storageService = {
     withdrawals[idx] = updated;
     setLocal('earnworld_withdrawals_db', withdrawals);
 
+    try {
+      await setDoc(doc(db, 'withdrawals', withdrawalId), updated, { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `withdrawals/${withdrawalId}`);
+    }
+
     // Record refund transaction
     await this.addTransaction({
       userId: wth.userId,
@@ -733,6 +908,19 @@ export const storageService = {
 
   // Notifications Management
   async getNotifications(userId: string): Promise<AppNotification[]> {
+    try {
+      const snap = await getDocs(collection(db, 'notifications'));
+      if (!snap.empty) {
+        const list = snap.docs.map(d => d.data() as AppNotification);
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setLocal('earnworld_notifications_db', list);
+        if (userId === 'all') return list;
+        return list.filter(n => n.userId === userId || n.userId === 'all' || !n.userId);
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, 'notifications');
+    }
+
     const list = getLocal<AppNotification[]>('earnworld_notifications_db', []);
     if (list.length === 0) {
       const initialNotifs: AppNotification[] = [
@@ -771,22 +959,29 @@ export const storageService = {
       return initialNotifs;
     }
 
-    // Filter for this user or 'all' broadcasts
-    const userNotifs = list.filter(n => n.userId === userId || n.userId === 'all');
+    const userNotifs = list.filter(n => n.userId === userId || n.userId === 'all' || !n.userId);
     return userNotifs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   },
 
   async addNotification(notif: Omit<AppNotification, 'id' | 'createdAt' | 'read'>): Promise<AppNotification> {
-    const list = getLocal<AppNotification[]>('earnworld_notifications_db', []);
+    const id = 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
     const newNotif: AppNotification = {
       ...notif,
-      id: 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      id,
       read: false,
       createdAt: new Date().toISOString()
     };
+    const list = getLocal<AppNotification[]>('earnworld_notifications_db', []);
     list.unshift(newNotif);
     setLocal('earnworld_notifications_db', list);
     window.dispatchEvent(new Event('earnworld_storage_sync'));
+
+    try {
+      await setDoc(doc(db, 'notifications', id), newNotif);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, `notifications/${id}`);
+    }
+
     return newNotif;
   },
 
@@ -797,6 +992,11 @@ export const storageService = {
       list[idx].read = true;
       setLocal('earnworld_notifications_db', list);
       window.dispatchEvent(new Event('earnworld_storage_sync'));
+      try {
+        await setDoc(doc(db, 'notifications', notifId), { read: true }, { merge: true });
+      } catch (e) {
+        // fallback
+      }
     }
   },
 
@@ -818,19 +1018,55 @@ export const storageService = {
       list[idx] = withdrawal;
       setLocal('earnworld_withdrawals_db', list);
     }
+    try {
+      await setDoc(doc(db, 'withdrawals', withdrawal.id), withdrawal, { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `withdrawals/${withdrawal.id}`);
+    }
   },
 
   async getUserWithdrawals(userId: string): Promise<WithdrawalRequest[]> {
+    try {
+      const q = query(collection(db, 'withdrawals'), where('userId', '==', userId));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const list = snap.docs.map(d => d.data() as WithdrawalRequest);
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        return list;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, 'withdrawals');
+    }
     const list = getLocal<WithdrawalRequest[]>('earnworld_withdrawals_db', []);
     return list.filter(w => w.userId === userId);
   },
 
   async getAllWithdrawals(): Promise<WithdrawalRequest[]> {
+    try {
+      const snap = await getDocs(collection(db, 'withdrawals'));
+      if (!snap.empty) {
+        const list = snap.docs.map(d => d.data() as WithdrawalRequest);
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setLocal('earnworld_withdrawals_db', list);
+        return list;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, 'withdrawals');
+    }
     const list = getLocal<WithdrawalRequest[]>('earnworld_withdrawals_db', []);
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   },
 
   async getAllUsers(): Promise<UserProfile[]> {
+    try {
+      const snap = await getDocs(collection(db, 'users'));
+      if (!snap.empty) {
+        const list = snap.docs.map(d => d.data() as UserProfile);
+        return list;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, 'users');
+    }
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
     return Object.values(usersMap);
   },
@@ -847,10 +1083,27 @@ export const storageService = {
     list.unshift(newTx);
     setLocal('earnworld_transactions_db', list);
 
+    try {
+      await setDoc(doc(db, 'transactions', id), newTx);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, `transactions/${id}`);
+    }
+
     return newTx;
   },
 
   async getUserTransactions(userId: string): Promise<Transaction[]> {
+    try {
+      const q = query(collection(db, 'transactions'), where('userId', '==', userId));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const list = snap.docs.map(d => d.data() as Transaction);
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        return list;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, 'transactions');
+    }
     const list = getLocal<Transaction[]>('earnworld_transactions_db', []);
     return list.filter(t => t.userId === userId);
   },
