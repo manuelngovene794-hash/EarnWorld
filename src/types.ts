@@ -117,7 +117,7 @@ export interface WithdrawalRequest {
   updatedAt: string;
 }
 
-export type TransactionType = 'checkin' | 'ad_reward' | 'survey' | 'offer' | 'referral' | 'withdrawal' | 'refund' | 'bonus';
+export type TransactionType = 'checkin' | 'daily' | 'ad_reward' | 'survey' | 'offer' | 'referral' | 'withdrawal' | 'refund' | 'bonus';
 
 export interface Transaction {
   id: string;

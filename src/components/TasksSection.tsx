@@ -185,7 +185,14 @@ export const TasksSection: React.FC<TasksSectionProps> = ({
     }
   };
 
-  const closeModal = () => {
+  const closeModal = async () => {
+    if (activeModalTask && currentUser && !completionSuccess) {
+      try {
+        await storageService.abandonTaskSession(currentUser.id, activeModalTask.id);
+      } catch (e) {
+        // ignore
+      }
+    }
     setActiveModalTask(null);
     onClearSelectedTask();
   };
@@ -383,28 +390,37 @@ export const TasksSection: React.FC<TasksSectionProps> = ({
                   {lang === 'pt' ? activeModalTask.descriptionPt : activeModalTask.description}
                 </p>
 
-                {/* Condition Notice */}
-                {!activeSession || activeSession.status !== 'in_progress' ? (
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 text-xs text-slate-300 space-y-1">
-                    <div className="flex items-center gap-1.5 text-amber-400 font-bold">
-                      <ShieldCheck className="w-4 h-4" />
-                      <span>Condição de Validação Real:</span>
+                {/* Real Mode Rules Notice */}
+                <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 text-xs text-slate-300 space-y-2">
+                  <div className="flex items-center justify-between text-amber-400 font-bold">
+                    <div className="flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-amber-400" />
+                      <span>Regras de Validação Real</span>
                     </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Os pontos <strong>NÃO são creditados ao iniciar</strong>. É necessário completar as respostas da pesquisa ou os passos do parceiro para que a validação aprove a concessão dos pontos.
-                    </p>
+                    <span className="text-[11px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                      Modo Real Ativo
+                    </span>
                   </div>
-                ) : (
-                  <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/40 space-y-2">
-                    <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
-                      <Sparkles className="w-4 h-4" />
-                      <span>Sessão Ativa • Preencha para Concluir</span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Complete a etapa abaixo com atenção. Os pontos serão validados e adicionados imediatamente ao seu saldo após submeter.
-                    </p>
-                  </div>
-                )}
+                  
+                  <ul className="space-y-1.5 text-[11px] text-slate-300 leading-relaxed">
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-400 font-bold mt-0.5">•</span>
+                      <span><strong>Tempo estimado ({activeModalTask.estimatedMinutes} min):</strong> É apenas uma estimativa. Pode demorar mais ou menos tempo conforme precisar.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-400 font-bold mt-0.5">•</span>
+                      <span><strong>O tempo, sozinho, NUNCA libera pontos.</strong> Os pontos só são creditados após a tarefa ser realmente concluída e validada.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-400 font-bold mt-0.5">•</span>
+                      <span><strong>Tarefa abandonada ou não concluída = 0 pontos.</strong></span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-400 font-bold mt-0.5">•</span>
+                      <span><strong>Pontos únicos:</strong> Cada tarefa pode gerar pontos apenas uma vez.</span>
+                    </li>
+                  </ul>
+                </div>
 
                 {/* Question / Step validation */}
                 {activeSession && activeSession.status === 'in_progress' && (

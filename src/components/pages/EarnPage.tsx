@@ -578,7 +578,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in overflow-y-auto">
           <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-amber-500/30 p-6 shadow-2xl relative text-left my-8">
             <button
-              onClick={() => setSelectedTask(null)}
+              onClick={completionSuccess ? () => setSelectedTask(null) : handleAbandonTask}
               className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
             >
               <X className="w-5 h-5" />
@@ -653,19 +653,40 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                 <h3 className="text-xl font-bold text-white">{selectedTask.titlePt}</h3>
                 <p className="text-sm text-slate-300 leading-relaxed">{selectedTask.descriptionPt}</p>
 
-                {/* Task Details Summary */}
-                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">Recompensa:</span>
-                    <span className="text-amber-400 font-black text-sm">+{selectedTask.rewardPoints} PTS</span>
+                {/* Task Details & 5 Real Rules Summary */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/30 space-y-3">
+                  <div className="flex items-center justify-between text-amber-400 font-bold text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-amber-400" />
+                      <span>Regras de Validação Real do EarnWorld</span>
+                    </div>
+                    <span className="text-[11px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-semibold">
+                      Modo Real Ativo
+                    </span>
                   </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">Valor em Dólares:</span>
-                    <span className="text-white font-semibold">US$ {(selectedTask.rewardPoints / 1000).toFixed(2)}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">Validação:</span>
-                    <span className="text-emerald-400 font-semibold">Imediata após resposta válida (sem espera artificial)</span>
+
+                  <ul className="space-y-1.5 text-[11px] text-slate-300 leading-relaxed border-t border-slate-800/80 pt-2.5">
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-400 font-bold">•</span>
+                      <span><strong>Tempo estimado ({selectedTask.estimatedMinutes} min):</strong> É apenas uma estimativa. Pode demorar mais de {selectedTask.estimatedMinutes} minutos sem qualquer penalização.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-400 font-bold">•</span>
+                      <span><strong>O tempo, sozinho, NUNCA libera pontos.</strong> Pontos só são creditados após a tarefa ser realmente concluída e validada.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-400 font-bold">•</span>
+                      <span><strong>Tarefa abandonada ou não concluída = 0 pontos.</strong></span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-400 font-bold">•</span>
+                      <span><strong>Pontos únicos:</strong> Cada tarefa pode gerar pontos apenas uma vez.</span>
+                    </li>
+                  </ul>
+
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-800/60">
+                    <span className="text-slate-400">Recompensa ao Concluir:</span>
+                    <span className="text-amber-400 font-black text-sm">+{selectedTask.rewardPoints} PTS (≈ US$ {(selectedTask.rewardPoints / 1000).toFixed(2)})</span>
                   </div>
                 </div>
 
@@ -737,7 +758,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({
                 {/* Action Buttons */}
                 <div className="pt-2 flex items-center gap-3">
                   <button
-                    onClick={() => setSelectedTask(null)}
+                    onClick={handleAbandonTask}
                     className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition-colors"
                   >
                     Cancelar

@@ -1,65 +1,5 @@
 import { AppConfig, TaskItem, WithdrawalRequest, Transaction, UserProfile, UserTaskSession, TaskCompletionRecord, AppNotification } from '../types';
 import { DEFAULT_CONFIG, INITIAL_TASKS } from '../data/initialData';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  getDocs, 
-  onSnapshot, 
-  query, 
-  where,
-  deleteDoc
-} from 'firebase/firestore';
-
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
-}
-
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
-  };
-  console.warn('Firestore Operation handled: ', JSON.stringify(errInfo));
-  return errInfo;
-}
 
 // Local storage helper functions for reliable, domain-independent browser persistence
 function getLocal<T>(key: string, defaultValue: T): T {
@@ -84,25 +24,6 @@ function setLocal<T>(key: string, value: T): void {
 export const storageService = {
   // Global configuration
   async getAppConfig(): Promise<AppConfig> {
-    try {
-      const snap = await getDoc(doc(db, 'app_config', 'global'));
-      if (snap.exists()) {
-        const data = snap.data() as AppConfig;
-        if (data.paymentFundUsd === undefined) {
-          data.paymentFundUsd = data.availableRealRevenueUsd ?? DEFAULT_CONFIG.paymentFundUsd ?? 100;
-        }
-        data.availableRealRevenueUsd = data.paymentFundUsd;
-        setLocal('earnworld_app_config', data);
-        return data;
-      } else {
-        await setDoc(doc(db, 'app_config', 'global'), DEFAULT_CONFIG);
-        setLocal('earnworld_app_config', DEFAULT_CONFIG);
-        return DEFAULT_CONFIG;
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.GET, 'app_config/global');
-    }
-
     const local = getLocal<AppConfig>('earnworld_app_config', DEFAULT_CONFIG);
     if (local.paymentFundUsd === undefined) {
       local.paymentFundUsd = local.availableRealRevenueUsd ?? DEFAULT_CONFIG.paymentFundUsd ?? 100;
@@ -120,30 +41,9 @@ export const storageService = {
       updated.paymentFundUsd = updates.availableRealRevenueUsd;
     }
     setLocal('earnworld_app_config', updated);
-
-    try {
-      await setDoc(doc(db, 'app_config', 'global'), updated, { merge: true });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'app_config/global');
-    }
   },
 
   subscribeAppConfig(callback: (config: AppConfig) => void) {
-    let unsubFirestore: (() => void) | null = null;
-    try {
-      unsubFirestore = onSnapshot(doc(db, 'app_config', 'global'), (snap) => {
-        if (snap.exists()) {
-          const cfg = snap.data() as AppConfig;
-          setLocal('earnworld_app_config', cfg);
-          callback(cfg);
-        }
-      }, (err) => {
-        handleFirestoreError(err, OperationType.GET, 'app_config/global');
-      });
-    } catch (e) {
-      console.warn('Firestore onSnapshot exception:', e);
-    }
-
     const emit = () => {
       const current = getLocal<AppConfig>('earnworld_app_config', DEFAULT_CONFIG);
       callback(current);
@@ -155,7 +55,6 @@ export const storageService = {
     window.addEventListener('storage', handleSync);
 
     return () => {
-      if (unsubFirestore) unsubFirestore();
       window.removeEventListener('earnworld_storage_sync', handleSync);
       window.removeEventListener('storage', handleSync);
     };
@@ -164,16 +63,6 @@ export const storageService = {
   // Credentials storage for direct email/pass login
   async getUserCredentials(email: string): Promise<{ userId: string; email: string; salt: string; passwordHash: string } | null> {
     const clean = email.trim().toLowerCase();
-    try {
-      const snap = await getDoc(doc(db, 'user_credentials', clean));
-      if (snap.exists()) {
-        const data = snap.data() as any;
-        return data;
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.GET, `user_credentials/${clean}`);
-    }
-
     const credsMap = getLocal<Record<string, any>>('earnworld_creds_db', {});
     return credsMap[clean] || null;
   },
@@ -190,30 +79,10 @@ export const storageService = {
     };
     credsMap[clean] = record;
     setLocal('earnworld_creds_db', credsMap);
-
-    try {
-      await setDoc(doc(db, 'user_credentials', clean), record, { merge: true });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `user_credentials/${clean}`);
-    }
   },
 
   async findUserByEmail(email: string): Promise<UserProfile | null> {
     const clean = email.trim().toLowerCase();
-    try {
-      const q = query(collection(db, 'users'), where('email', '==', clean));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const profile = snap.docs[0].data() as UserProfile;
-        const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
-        usersMap[profile.id] = profile;
-        setLocal('earnworld_users_db', usersMap);
-        return profile;
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, 'users');
-    }
-
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
     for (const u of Object.values(usersMap)) {
       if (u.email && u.email.toLowerCase() === clean) {
@@ -223,21 +92,14 @@ export const storageService = {
     return null;
   },
 
+  async findUserByPhone(phone: string): Promise<UserProfile | null> {
+    const clean = phone.replace(/[^\d+]/g, '');
+    const users = await this.getAllUsers();
+    return users.find(u => u.phoneNumber && u.phoneNumber.replace(/[^\d+]/g, '') === clean) || null;
+  },
+
   // User Profile
   async getUserProfile(userId: string): Promise<UserProfile | null> {
-    try {
-      const snap = await getDoc(doc(db, 'users', userId));
-      if (snap.exists()) {
-        const profile = snap.data() as UserProfile;
-        const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
-        usersMap[userId] = profile;
-        setLocal('earnworld_users_db', usersMap);
-        return profile;
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.GET, `users/${userId}`);
-    }
-
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
     return usersMap[userId] || null;
   },
@@ -246,12 +108,6 @@ export const storageService = {
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
     usersMap[profile.id] = profile;
     setLocal('earnworld_users_db', usersMap);
-
-    try {
-      await setDoc(doc(db, 'users', profile.id), profile, { merge: true });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `users/${profile.id}`);
-    }
   },
 
   async updateUserBalance(userId: string, pointsDelta: number, newTotalEarnedDelta = 0): Promise<void> {
@@ -318,10 +174,10 @@ export const storageService = {
 
     await this.addTransaction({
       userId,
-      type: 'checkin',
+      type: 'daily',
       points: bonusPoints,
       amountUsd: bonusPoints / 1000,
-      description: `Check-in Diário (Dia ${newStreak})`,
+      description: `Recompensa Diária (Sequência de ${newStreak} dia${newStreak > 1 ? 's' : ''})`,
       status: 'completed',
       createdAt: new Date().toISOString()
     });
@@ -329,12 +185,14 @@ export const storageService = {
     return { success: true, newStreak, newBalance };
   },
 
-  // Tasks
+  // Tasks Management
   async getTasks(): Promise<TaskItem[]> {
-    const localTasks = getLocal<TaskItem[]>('earnworld_tasks_db', []);
-    if (localTasks.length > 0) return localTasks;
-    setLocal('earnworld_tasks_db', INITIAL_TASKS);
-    return INITIAL_TASKS;
+    const local = getLocal<TaskItem[]>('earnworld_tasks_db', []);
+    if (local.length === 0) {
+      setLocal('earnworld_tasks_db', INITIAL_TASKS);
+      return INITIAL_TASKS;
+    }
+    return local;
   },
 
   async saveTask(task: TaskItem): Promise<void> {
@@ -395,10 +253,10 @@ export const storageService = {
       throw new Error('Tarefa não encontrada.');
     }
 
-    // 1. Prevent duplicate credits: check if already completed
+    // 1. RULE: Cada tarefa pode gerar pontos apenas uma vez
     const alreadyCompleted = await this.isTaskCompleted(userId, taskId);
     if (alreadyCompleted) {
-      throw new Error('Esta tarefa já foi concluída e os pontos já foram creditados anteriormente. Créditos duplicados são proibidos.');
+      throw new Error('Esta tarefa já foi concluída e os pontos já foram creditados anteriormente. Cada tarefa só pode gerar pontos uma vez.');
     }
 
     const allSessions = getLocal<Record<string, UserTaskSession>>('earnworld_task_sessions_db', {});
@@ -431,6 +289,11 @@ export const storageService = {
   },
 
   // Validate real completion: validates required answers, prevents duplicate credit, and credits points ONLY on success
+  // Rules enforced:
+  // - Tempo estimado é apenas uma estimativa; o usuário pode demorar mais ou qualquer tempo
+  // - O tempo sozinho NUNCA libera pontos
+  // - Pontos só são creditados após a tarefa ser realmente concluída e validada
+  // - Cada tarefa pode gerar pontos apenas uma vez
   async validateAndCompleteTask(
     userId: string, 
     taskId: string, 
@@ -447,19 +310,18 @@ export const storageService = {
       throw new Error('Tarefa não encontrada.');
     }
 
-    // 1. RULE: Prevent duplicate credit
+    // 1. RULE: Cada tarefa pode gerar pontos apenas uma vez (Anti-duplicate lock)
     const alreadyCompleted = await this.isTaskCompleted(userId, taskId);
     if (alreadyCompleted) {
-      throw new Error('Esta tarefa já foi concluída anteriormente. Créditos duplicados são estritamente proibidos.');
+      throw new Error('Esta tarefa já foi concluída anteriormente. Cada tarefa pode gerar pontos apenas uma vez.');
     }
 
-    // 2. RULE: Active session verification (ensure valid active session exists)
+    // 2. Active session verification / auto-create
     const allSessions = getLocal<Record<string, UserTaskSession>>('earnworld_task_sessions_db', {});
     const sessionKey = `${userId}_${taskId}`;
     let session = allSessions[sessionKey];
 
     if (!session || session.status !== 'in_progress') {
-      // Automatically maintain and establish a valid session so the error never occurs
       session = {
         id: `ts_${userId}_${taskId}_${Date.now()}`,
         userId,
@@ -478,7 +340,7 @@ export const storageService = {
       throw new Error('Os pontos desta tarefa já foram creditados anteriormente.');
     }
 
-    // 3. RULE: Real completion validation (criteria fulfilled by user)
+    // 3. RULE: Real completion validation (O tempo sozinho NUNCA libera pontos; respostas reais são obrigatórias)
     if (task.category === 'survey') {
       const hasAnswer = userAnswers && Object.values(userAnswers).some(val => val && val.trim().length > 0);
       if (!hasAnswer) {
@@ -491,7 +353,7 @@ export const storageService = {
       }
     }
 
-    // 4. ATOMIC CREDITING: All conditions met without artificial timers!
+    // 4. ATOMIC CREDITING: All real conditions met!
     // A. Mark session as completed and credited
     const completedAt = new Date().toISOString();
     session.status = 'completed';
@@ -503,7 +365,7 @@ export const storageService = {
     allSessions[sessionKey] = session;
     setLocal('earnworld_task_sessions_db', allSessions);
 
-    // B. Record in completed tasks register (Anti-duplicate lock)
+    // B. Record in completed tasks register (Lock forever: cada tarefa gera pontos apenas 1 vez)
     const completedMap = getLocal<Record<string, TaskCompletionRecord[]>>('earnworld_completed_tasks_db', {});
     const userCompleted = completedMap[userId] || [];
     userCompleted.push({
@@ -517,7 +379,7 @@ export const storageService = {
     completedMap[userId] = userCompleted;
     setLocal('earnworld_completed_tasks_db', completedMap);
 
-    // C. Update user points balance ONLY now after successful completion
+    // C. Update user points balance ONLY now after real validation
     const newBalance = (user.pointsBalance || 0) + task.rewardPoints;
     const newEarned = (user.totalEarnedPoints || 0) + task.rewardPoints;
     const updatedUser: UserProfile = {
@@ -555,10 +417,13 @@ export const storageService = {
     };
   },
 
+  // RULE: Tarefa abandonada ou não concluída = 0 pontos
   async abandonTaskSession(userId: string, taskId: string): Promise<void> {
     const allSessions = getLocal<Record<string, UserTaskSession>>('earnworld_task_sessions_db', {});
     const sessionKey = `${userId}_${taskId}`;
     if (allSessions[sessionKey]) {
+      allSessions[sessionKey].status = 'abandoned';
+      allSessions[sessionKey].credited = false;
       delete allSessions[sessionKey];
       setLocal('earnworld_task_sessions_db', allSessions);
     }
@@ -598,18 +463,16 @@ export const storageService = {
     }
 
     // 3. RULE: Fundo disponível para pagamentos Check
-    // "Quando o fundo chegar a zero, bloquear novos saques e mostrar 'Levantamentos temporariamente indisponíveis — aguarde novos fundos'."
     const config = await this.getAppConfig();
     const currentFund = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
 
     const FUND_UNAVAILABLE_MESSAGE = 'Levantamentos temporariamente indisponíveis — aguarde novos fundos';
 
     if (currentFund <= 0 || currentFund < req.amountUsd) {
-      // Do NOT deduct user points! Balance is kept intact.
       throw new Error(FUND_UNAVAILABLE_MESSAGE);
     }
 
-    // 4. RULE: "Impedir pedidos duplicados"
+    // 4. RULE: Prevent duplicate requests
     const withdrawals = getLocal<WithdrawalRequest[]>('earnworld_withdrawals_db', []);
     
     // Check if user already has an active pending withdrawal
@@ -648,15 +511,9 @@ export const storageService = {
       totalWithdrawnPoints: newWithdrawn
     });
 
-    // Store withdrawal record in local storage and Firestore
+    // Store withdrawal record in local storage
     withdrawals.unshift(withdrawal);
     setLocal('earnworld_withdrawals_db', withdrawals);
-
-    try {
-      await setDoc(doc(db, 'withdrawals', id), withdrawal);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `withdrawals/${id}`);
-    }
 
     // Record ledger transaction
     await this.addTransaction({
@@ -681,9 +538,6 @@ export const storageService = {
     return withdrawal;
   },
 
-  // "Cada saque aprovado deve diminuir o fundo disponível pelo valor pago."
-  // "Nunca aprovar pagamentos acima do fundo disponível."
-  // "Impedir pagamentos repetidos."
   async approveWithdrawal(withdrawalId: string, customMessage?: string): Promise<{ withdrawal: WithdrawalRequest; newFund: number }> {
     const withdrawals = getLocal<WithdrawalRequest[]>('earnworld_withdrawals_db', []);
     const idx = withdrawals.findIndex(w => w.id === withdrawalId);
@@ -693,7 +547,6 @@ export const storageService = {
 
     const wth = withdrawals[idx];
 
-    // Impedir pagamentos repetidos / aprovações repetidas
     if (wth.status === 'paid') {
       throw new Error('Este pedido já foi pago e liquidado anteriormente. Pagamentos repetidos são bloqueados.');
     }
@@ -707,14 +560,12 @@ export const storageService = {
     const config = await this.getAppConfig();
     const currentFund = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
 
-    // "Nunca aprovar pagamentos acima do fundo disponível."
     if (currentFund < wth.amountUsd) {
       throw new Error(
         `Fundo insuficiente para aprovar este levantamento! Fundo disponível: US$ ${currentFund.toFixed(2)}, valor solicitado: US$ ${wth.amountUsd.toFixed(2)}. Adicione mais fundos no painel antes de aprovar.`
       );
     }
 
-    // Diminui o fundo disponível pelo valor pago
     const newFund = Math.max(0, Number((currentFund - wth.amountUsd).toFixed(2)));
     await this.updateAppConfig({
       paymentFundUsd: newFund,
@@ -731,13 +582,6 @@ export const storageService = {
     withdrawals[idx] = updated;
     setLocal('earnworld_withdrawals_db', withdrawals);
 
-    try {
-      await setDoc(doc(db, 'withdrawals', withdrawalId), updated, { merge: true });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `withdrawals/${withdrawalId}`);
-    }
-
-    // Notify user of approved withdrawal
     await this.addNotification({
       userId: wth.userId,
       title: '✅ Saque Aprovado!',
@@ -758,7 +602,6 @@ export const storageService = {
 
     const wth = withdrawals[idx];
 
-    // Impedir pagamentos repetidos
     if (wth.status === 'paid') {
       throw new Error('Este pedido já foi pago anteriormente. Pagamentos repetidos são estritamente bloqueados.');
     }
@@ -770,7 +613,6 @@ export const storageService = {
     const currentFund = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
 
     let newFund = currentFund;
-    // If not approved prior to marking as paid, verify fund and deduct now
     if (wth.status === 'pending') {
       if (currentFund < wth.amountUsd) {
         throw new Error(
@@ -795,13 +637,6 @@ export const storageService = {
     withdrawals[idx] = updated;
     setLocal('earnworld_withdrawals_db', withdrawals);
 
-    try {
-      await setDoc(doc(db, 'withdrawals', withdrawalId), updated, { merge: true });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `withdrawals/${withdrawalId}`);
-    }
-
-    // Notify user of paid withdrawal
     await this.addNotification({
       userId: wth.userId,
       title: '💰 Saque Pago com Sucesso!',
@@ -828,11 +663,9 @@ export const storageService = {
       throw new Error('Este pedido já se encontra rejeitado.');
     }
 
-    // Refund points to user
     await this.refundWithdrawalPoints(wth.userId, wth.pointsDeducted);
 
     let restoredFund: number | undefined = undefined;
-    // If it was already approved, return money to available fund
     if (wth.status === 'approved') {
       const config = await this.getAppConfig();
       const currentFund = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
@@ -853,13 +686,6 @@ export const storageService = {
     withdrawals[idx] = updated;
     setLocal('earnworld_withdrawals_db', withdrawals);
 
-    try {
-      await setDoc(doc(db, 'withdrawals', withdrawalId), updated, { merge: true });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `withdrawals/${withdrawalId}`);
-    }
-
-    // Record refund transaction
     await this.addTransaction({
       userId: wth.userId,
       type: 'refund',
@@ -870,7 +696,6 @@ export const storageService = {
       createdAt: new Date().toISOString()
     });
 
-    // Notify user of rejected withdrawal
     await this.addNotification({
       userId: wth.userId,
       title: '❌ Pedido de Saque Recusado',
@@ -882,7 +707,6 @@ export const storageService = {
     return { withdrawal: updated, restoredFund };
   },
 
-  // Add / Adjust Payment Fund (Admin protected action)
   async addPaymentFund(amountUsd: number, note?: string): Promise<number> {
     const config = await this.getAppConfig();
     const current = typeof config.paymentFundUsd === 'number' ? config.paymentFundUsd : (config.availableRealRevenueUsd ?? 0);
@@ -908,19 +732,6 @@ export const storageService = {
 
   // Notifications Management
   async getNotifications(userId: string): Promise<AppNotification[]> {
-    try {
-      const snap = await getDocs(collection(db, 'notifications'));
-      if (!snap.empty) {
-        const list = snap.docs.map(d => d.data() as AppNotification);
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setLocal('earnworld_notifications_db', list);
-        if (userId === 'all') return list;
-        return list.filter(n => n.userId === userId || n.userId === 'all' || !n.userId);
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, 'notifications');
-    }
-
     const list = getLocal<AppNotification[]>('earnworld_notifications_db', []);
     if (list.length === 0) {
       const initialNotifs: AppNotification[] = [
@@ -975,13 +786,6 @@ export const storageService = {
     list.unshift(newNotif);
     setLocal('earnworld_notifications_db', list);
     window.dispatchEvent(new Event('earnworld_storage_sync'));
-
-    try {
-      await setDoc(doc(db, 'notifications', id), newNotif);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `notifications/${id}`);
-    }
-
     return newNotif;
   },
 
@@ -992,11 +796,6 @@ export const storageService = {
       list[idx].read = true;
       setLocal('earnworld_notifications_db', list);
       window.dispatchEvent(new Event('earnworld_storage_sync'));
-      try {
-        await setDoc(doc(db, 'notifications', notifId), { read: true }, { merge: true });
-      } catch (e) {
-        // fallback
-      }
     }
   },
 
@@ -1018,55 +817,19 @@ export const storageService = {
       list[idx] = withdrawal;
       setLocal('earnworld_withdrawals_db', list);
     }
-    try {
-      await setDoc(doc(db, 'withdrawals', withdrawal.id), withdrawal, { merge: true });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `withdrawals/${withdrawal.id}`);
-    }
   },
 
   async getUserWithdrawals(userId: string): Promise<WithdrawalRequest[]> {
-    try {
-      const q = query(collection(db, 'withdrawals'), where('userId', '==', userId));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const list = snap.docs.map(d => d.data() as WithdrawalRequest);
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        return list;
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, 'withdrawals');
-    }
     const list = getLocal<WithdrawalRequest[]>('earnworld_withdrawals_db', []);
     return list.filter(w => w.userId === userId);
   },
 
   async getAllWithdrawals(): Promise<WithdrawalRequest[]> {
-    try {
-      const snap = await getDocs(collection(db, 'withdrawals'));
-      if (!snap.empty) {
-        const list = snap.docs.map(d => d.data() as WithdrawalRequest);
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setLocal('earnworld_withdrawals_db', list);
-        return list;
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, 'withdrawals');
-    }
     const list = getLocal<WithdrawalRequest[]>('earnworld_withdrawals_db', []);
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   },
 
   async getAllUsers(): Promise<UserProfile[]> {
-    try {
-      const snap = await getDocs(collection(db, 'users'));
-      if (!snap.empty) {
-        const list = snap.docs.map(d => d.data() as UserProfile);
-        return list;
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, 'users');
-    }
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
     return Object.values(usersMap);
   },
@@ -1083,27 +846,10 @@ export const storageService = {
     list.unshift(newTx);
     setLocal('earnworld_transactions_db', list);
 
-    try {
-      await setDoc(doc(db, 'transactions', id), newTx);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `transactions/${id}`);
-    }
-
     return newTx;
   },
 
   async getUserTransactions(userId: string): Promise<Transaction[]> {
-    try {
-      const q = query(collection(db, 'transactions'), where('userId', '==', userId));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const list = snap.docs.map(d => d.data() as Transaction);
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        return list;
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, 'transactions');
-    }
     const list = getLocal<Transaction[]>('earnworld_transactions_db', []);
     return list.filter(t => t.userId === userId);
   },
@@ -1113,4 +859,3 @@ export const storageService = {
     return users.filter(u => u.referredBy === referralCode);
   }
 };
-

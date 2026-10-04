@@ -1,10 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile } from '../types';
 import { storageService } from '../services/storageService';
-import { auth, googleProvider } from '../firebase';
-import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
 const ADMIN_EMAILS = ['manuelngovene794@gmail.com', 'admin@earnworld.com'];
+const GOOGLE_CLIENT_ID = '160035757865-oc52j4k8r574pnsouid9vk2gkfgj6516.apps.googleusercontent.com';
 
 // Native cryptographic password hashing using Web Crypto API (SHA-256)
 async function computeHash(text: string, salt: string): Promise<string> {
@@ -16,11 +15,19 @@ async function computeHash(text: string, salt: string): Promise<string> {
     .join('');
 }
 
+export interface GoogleAuthData {
+  email: string;
+  name?: string;
+  picture?: string;
+  sub?: string;
+}
+
 interface AuthContextType {
   currentUser: UserProfile | null;
-  firebaseUser: FirebaseUser | null;
+  firebaseUser: null;
   loading: boolean;
   loginWithGoogle: () => Promise<void>;
+  loginWithGoogleData: (data: GoogleAuthData) => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
   registerWithEmail: (
     email: string,
@@ -30,6 +37,7 @@ interface AuthContextType {
     phone?: string,
     referralCode?: string
   ) => Promise<void>;
+  sendPhoneSms: (phone: string) => Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean; debugCode?: string }>;
   registerWithPhone: (
     phone: string,
     name: string,
@@ -50,10 +58,9 @@ const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Initialize and observe real Firebase Authentication session
+  // Initialize and observe real authenticated session from storage
   useEffect(() => {
     // 1. Purge any legacy demo user session to guarantee 100% real user accounts
     try {
@@ -70,157 +77,176 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore
     }
 
-    // 2. Real-time Firebase Auth listener
-    const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
-      setFirebaseUser(fbUser);
-      if (fbUser && fbUser.email) {
-        const cleanEmail = fbUser.email.toLowerCase().trim();
-        const isAdmin = ADMIN_EMAILS.includes(cleanEmail) || cleanEmail === 'manuelngovene794@gmail.com';
-
-        let profile = await storageService.getUserProfile(fbUser.uid);
-        if (!profile) {
-          profile = await storageService.findUserByEmail(cleanEmail);
-        }
-
-        if (profile) {
-          if (isAdmin && profile.role !== 'admin') {
-            profile.role = 'admin';
-            await storageService.saveUserProfile(profile);
-          }
-          if (fbUser.displayName && (!profile.displayName || profile.displayName.includes('Google') || profile.displayName.includes('Convidado'))) {
-            profile.displayName = fbUser.displayName;
-            await storageService.saveUserProfile(profile);
-          }
-          setCurrentUser(profile);
-          localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
-          localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: profile.id, email: profile.email }));
-        } else {
-          // Provision real profile from Google Account data
-          const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
-          const newProfile: UserProfile = {
-            id: fbUser.uid,
-            email: cleanEmail,
-            displayName: fbUser.displayName || (isAdmin ? 'Administrador' : cleanEmail.split('@')[0]),
-            phoneNumber: fbUser.phoneNumber || '',
-            country: 'MZ',
-            referralCode: generatedRefCode,
-            pointsBalance: 250,
-            totalEarnedPoints: 250,
-            totalWithdrawnPoints: 0,
-            role: isAdmin ? 'admin' : 'user',
-            consecutiveCheckIns: 1,
-            createdAt: new Date().toISOString()
-          };
-          await storageService.saveUserProfile(newProfile);
-          await storageService.addTransaction({
-            userId: fbUser.uid,
-            type: 'bonus',
-            points: 250,
-            amountUsd: 0.25,
-            description: 'Bónus de Boas-Vindas Google Sign-In',
-            status: 'completed',
-            createdAt: new Date().toISOString()
-          });
-          setCurrentUser(newProfile);
-          localStorage.setItem('earnworld_user_cache', JSON.stringify(newProfile));
-          localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: newProfile.id, email: newProfile.email }));
-        }
-        setLoading(false);
-      } else {
-        // If not authenticated via Google, check direct credentials session
-        try {
-          const activeSession = localStorage.getItem('earnworld_active_session');
-          if (activeSession) {
-            const { uid, email } = JSON.parse(activeSession);
-            if (uid && uid !== 'user_demo_preview') {
-              let profile = await storageService.getUserProfile(uid);
-              if (!profile && email) {
-                profile = await storageService.findUserByEmail(email);
+    // 2. Load active authenticated user
+    const initAuth = async () => {
+      try {
+        const activeSession = localStorage.getItem('earnworld_active_session');
+        if (activeSession) {
+          const { uid, email } = JSON.parse(activeSession);
+          if (uid && uid !== 'user_demo_preview') {
+            let profile = await storageService.getUserProfile(uid);
+            if (!profile && email) {
+              profile = await storageService.findUserByEmail(email);
+            }
+            if (profile) {
+              const cleanEmail = profile.email?.toLowerCase().trim();
+              const isAdmin = ADMIN_EMAILS.includes(cleanEmail || '') || cleanEmail === 'manuelngovene794@gmail.com';
+              if (isAdmin && profile.role !== 'admin') {
+                profile.role = 'admin';
+                await storageService.saveUserProfile(profile);
               }
-              if (profile) {
-                setCurrentUser(profile);
-              }
+              setCurrentUser(profile);
             }
           }
-        } catch (e) {
-          // ignore
         }
+      } catch (e) {
+        console.warn('Auth restoration notice:', e);
+      } finally {
         setLoading(false);
       }
-    });
+    };
 
-    return () => unsubscribeAuth();
+    initAuth();
   }, []);
 
-  // REAL Google Authentication using GoogleAuthProvider & signInWithPopup
-  const loginWithGoogle = async () => {
-    try {
-      const userCredential = await signInWithPopup(auth, googleProvider);
-      const fbUser = userCredential.user;
-      if (!fbUser || !fbUser.email) {
-        throw new Error('Falha ao autenticar com a conta Google.');
+  // Process authorized Google account data and persist real user profile
+  const loginWithGoogleData = async (data: GoogleAuthData) => {
+    const cleanEmail = data.email.toLowerCase().trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      throw new Error('Email Google inválido.');
+    }
+
+    const isAdmin = ADMIN_EMAILS.includes(cleanEmail) || cleanEmail === 'manuelngovene794@gmail.com';
+    let profile = await storageService.findUserByEmail(cleanEmail);
+    if (!profile && data.sub) {
+      profile = await storageService.getUserProfile(data.sub);
+    }
+
+    if (profile) {
+      if (isAdmin && profile.role !== 'admin') {
+        profile.role = 'admin';
       }
-
-      const cleanEmail = fbUser.email.toLowerCase().trim();
-      const isAdmin = ADMIN_EMAILS.includes(cleanEmail) || cleanEmail === 'manuelngovene794@gmail.com';
-
-      let profile = await storageService.getUserProfile(fbUser.uid);
-      if (!profile) {
-        profile = await storageService.findUserByEmail(cleanEmail);
+      if (data.name && (!profile.displayName || profile.displayName.includes('Google') || profile.displayName.includes('Convidado'))) {
+        profile.displayName = data.name;
       }
-
-      if (!profile) {
-        const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
-        profile = {
-          id: fbUser.uid,
-          email: cleanEmail,
-          displayName: fbUser.displayName || (isAdmin ? 'Administrador' : cleanEmail.split('@')[0]),
-          phoneNumber: fbUser.phoneNumber || '',
-          country: 'MZ',
-          referralCode: generatedRefCode,
-          pointsBalance: 250,
-          totalEarnedPoints: 250,
-          totalWithdrawnPoints: 0,
-          role: isAdmin ? 'admin' : 'user',
-          consecutiveCheckIns: 1,
-          createdAt: new Date().toISOString()
-        };
-        await storageService.saveUserProfile(profile);
-
-        await storageService.addTransaction({
-          userId: fbUser.uid,
-          type: 'bonus',
-          points: 250,
-          amountUsd: 0.25,
-          description: 'Bónus de Boas-Vindas Google Sign-In',
-          status: 'completed',
-          createdAt: new Date().toISOString()
-        });
-      } else {
-        if (isAdmin && profile.role !== 'admin') {
-          profile.role = 'admin';
-        }
-        if (fbUser.displayName && (!profile.displayName || profile.displayName.includes('Google') || profile.displayName.includes('Convidado'))) {
-          profile.displayName = fbUser.displayName;
-        }
-        await storageService.saveUserProfile(profile);
-      }
-
+      await storageService.saveUserProfile(profile);
       setCurrentUser(profile);
-      setFirebaseUser(fbUser);
       localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
       localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: profile.id, email: profile.email }));
-    } catch (err: any) {
-      console.error('Google Sign-In Error:', err);
-      if (err.code === 'auth/popup-closed-by-user') {
-        throw new Error('Janela do Google foi fechada antes de concluir.');
-      } else if (err.code === 'auth/popup-blocked') {
-        throw new Error('O navegador bloqueou o popup do Google. Permita popups para este site.');
-      } else if (err.code === 'auth/cancelled-popup-request') {
-        return;
-      }
-      throw new Error(err.message || 'Erro ao realizar login com o Google.');
+    } else {
+      // Provision real profile from authorized Google account data
+      const uid = data.sub || ('usr_g_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
+      const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
+      const newProfile: UserProfile = {
+        id: uid,
+        email: cleanEmail,
+        displayName: data.name || (isAdmin ? 'Administrador' : cleanEmail.split('@')[0]),
+        phoneNumber: '',
+        country: 'MZ',
+        referralCode: generatedRefCode,
+        pointsBalance: 250,
+        totalEarnedPoints: 250,
+        totalWithdrawnPoints: 0,
+        role: isAdmin ? 'admin' : 'user',
+        consecutiveCheckIns: 1,
+        createdAt: new Date().toISOString()
+      };
+      await storageService.saveUserProfile(newProfile);
+      await storageService.addTransaction({
+        userId: uid,
+        type: 'bonus',
+        points: 250,
+        amountUsd: 0.25,
+        description: 'Bónus de Boas-Vindas Google Sign-In',
+        status: 'completed',
+        createdAt: new Date().toISOString()
+      });
+      setCurrentUser(newProfile);
+      localStorage.setItem('earnworld_user_cache', JSON.stringify(newProfile));
+      localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: newProfile.id, email: newProfile.email }));
     }
+  };
+
+  // REAL Google Authentication using Google Identity Services (GIS)
+  const loginWithGoogle = async () => {
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const googleObj = (window as any).google;
+
+        if (googleObj?.accounts?.oauth2?.initTokenClient) {
+          const client = googleObj.accounts.oauth2.initTokenClient({
+            client_id: GOOGLE_CLIENT_ID,
+            scope: 'email profile openid',
+            callback: async (tokenResponse: any) => {
+              if (tokenResponse?.error) {
+                reject(new Error(tokenResponse.error_description || 'Autorização Google cancelada.'));
+                return;
+              }
+              if (!tokenResponse?.access_token) {
+                reject(new Error('Falha ao receber token do Google.'));
+                return;
+              }
+
+              try {
+                // Fetch verified account info directly from Google's userinfo API
+                const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                  headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
+                });
+                if (!res.ok) {
+                  throw new Error(`Google Userinfo error: ${res.status}`);
+                }
+                const googleProfile = await res.json();
+                await loginWithGoogleData({
+                  email: googleProfile.email,
+                  name: googleProfile.name,
+                  picture: googleProfile.picture,
+                  sub: googleProfile.sub
+                });
+                resolve();
+              } catch (fetchErr: any) {
+                reject(fetchErr);
+              }
+            }
+          });
+
+          client.requestAccessToken({ prompt: 'select_account' });
+        } else if (googleObj?.accounts?.id?.initialize) {
+          // Fallback to GIS ID Token
+          googleObj.accounts.id.initialize({
+            client_id: GOOGLE_CLIENT_ID,
+            callback: async (response: any) => {
+              try {
+                const base64Url = response.credential.split('.')[1];
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                const jsonPayload = decodeURIComponent(
+                  atob(base64)
+                    .split('')
+                    .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                    .join('')
+                );
+                const payload = JSON.parse(jsonPayload);
+                await loginWithGoogleData({
+                  email: payload.email,
+                  name: payload.name,
+                  picture: payload.picture,
+                  sub: payload.sub
+                });
+                resolve();
+              } catch (e: any) {
+                reject(e);
+              }
+            }
+          });
+          googleObj.accounts.id.prompt();
+        } else {
+          // If GIS script is still loading in the iframe
+          reject(new Error('Serviço Google Identity Services a carregar. Por favor, tente novamente em alguns instantes.'));
+        }
+      } catch (err: any) {
+        console.error('Google Sign-In Error:', err);
+        reject(new Error(err.message || 'Erro ao realizar login com o Google.'));
+      }
+    });
   };
 
   const loginWithEmail = async (email: string, pass: string) => {
@@ -243,7 +269,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (profile) {
-        const isAdmin = ADMIN_EMAILS.includes(cleanEmail);
+        const isAdmin = ADMIN_EMAILS.includes(cleanEmail) || cleanEmail === 'manuelngovene794@gmail.com';
         if (isAdmin && profile.role !== 'admin') {
           profile.role = 'admin';
           await storageService.saveUserProfile(profile);
@@ -302,7 +328,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const uid = 'usr_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
     const initialPoints = cleanRef ? 250 : 150;
-    const isAdmin = ADMIN_EMAILS.includes(cleanEmail);
+    const isAdmin = ADMIN_EMAILS.includes(cleanEmail) || cleanEmail === 'manuelngovene794@gmail.com';
     const newRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
 
     // Securely hash password and save credentials
@@ -344,6 +370,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('earnworld_active_session', JSON.stringify({ uid, email: profile.email }));
   };
 
+  // Real SMS OTP Dispatch (Supports Mozambique +258 and International E.164)
+  const sendPhoneSms = async (phone: string): Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean; debugCode?: string }> => {
+    const raw = phone.trim();
+    if (!raw || raw.length < 5) {
+      throw new Error('Por favor, introduza um número de telemóvel válido.');
+    }
+
+    const response = await fetch('/api/auth/send-sms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber: raw })
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+      throw new Error(data.message || 'Erro ao enviar SMS de verificação.');
+    }
+
+    return data;
+  };
+
+  // Real Phone Authentication: Verifies real 6-digit OTP against server
   const registerWithPhone = async (
     phone: string,
     name: string,
@@ -351,21 +399,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     verificationCode: string,
     referralCode?: string
   ) => {
-    if (verificationCode !== '123456' && verificationCode.length < 4) {
-      throw new Error('Código de verificação inválido.');
+    const cleanCode = verificationCode.trim();
+    if (!cleanCode || cleanCode.length !== 6) {
+      throw new Error('Por favor, introduza o código de verificação SMS de 6 dígitos.');
     }
 
-    const cleanPhone = phone.replace(/[^0-9+]/g, '');
+    // 1. Verify real OTP with server
+    const verifyRes = await fetch('/api/auth/verify-sms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber: phone, code: cleanCode })
+    });
+
+    const verifyData = await verifyRes.json();
+    if (!verifyRes.ok || !verifyData.success) {
+      throw new Error(verifyData.message || 'Código SMS inválido ou expirado.');
+    }
+
+    const cleanPhone = verifyData.phoneNumber || phone.replace(/[^\d+]/g, '');
     const cleanEmail = `phone_${cleanPhone.replace(/[^0-9]/g, '')}@earnworld.user`;
+
+    // 2. Check if user already exists (login)
+    let existingProfile = await storageService.findUserByEmail(cleanEmail);
+    if (!existingProfile) {
+      existingProfile = await storageService.findUserByPhone(cleanPhone);
+    }
+
+    if (existingProfile) {
+      setCurrentUser(existingProfile);
+      localStorage.setItem('earnworld_user_cache', JSON.stringify(existingProfile));
+      localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: existingProfile.id, email: existingProfile.email }));
+      return;
+    }
+
+    // 3. New real registration with phone
     const cleanRef = referralCode && referralCode.trim().length > 0 ? referralCode.trim().toUpperCase() : undefined;
-    const uid = 'usr_phone_' + Date.now().toString(36);
+    const uid = 'usr_phone_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
     const newRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
 
     const profile: UserProfile = {
       id: uid,
       email: cleanEmail,
-      displayName: name?.trim() || `Utilizador ${phone}`,
-      phoneNumber: phone,
+      displayName: name?.trim() || `Utilizador ${cleanPhone}`,
+      phoneNumber: cleanPhone,
       country: country || 'MZ',
       referralCode: newRefCode,
       ...(cleanRef ? { referredBy: cleanRef } : {}),
@@ -383,7 +459,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       type: 'bonus',
       points: 200,
       amountUsd: 0.20,
-      description: 'Registo por Telefone Verificado',
+      description: 'Registo por Número de Telemóvel Real Verificado (+258)',
       status: 'completed',
       createdAt: new Date().toISOString()
     });
@@ -410,19 +486,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await storageService.saveUserCredentials(cleanEmail, user.id, salt, passwordHash);
   };
 
-  const quickLoginAsDemoUser = async (_country = 'Global') => {
-    // Route to real Google authentication instead of mock demo user
+  const quickLoginAsDemoUser = async () => {
+    // Route to real Google authentication
     await loginWithGoogle();
   };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.warn('SignOut warning:', e);
-    }
     setCurrentUser(null);
-    setFirebaseUser(null);
     localStorage.removeItem('earnworld_active_session');
     localStorage.removeItem('earnworld_demo_session');
     localStorage.removeItem('earnworld_user_cache');
@@ -502,8 +572,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         firebaseUser: null,
         loading,
         loginWithGoogle,
+        loginWithGoogleData,
         loginWithEmail,
         registerWithEmail,
+        sendPhoneSms,
         registerWithPhone,
         resetPassword,
         logout,
