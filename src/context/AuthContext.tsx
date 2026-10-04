@@ -37,7 +37,7 @@ interface AuthContextType {
     phone?: string,
     referralCode?: string
   ) => Promise<void>;
-  sendPhoneSms: (phone: string) => Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean; debugCode?: string }>;
+  sendPhoneSms: (phone: string) => Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean }>;
   registerWithPhone: (
     phone: string,
     name: string,
@@ -51,7 +51,6 @@ interface AuthContextType {
   claimCheckIn: (bonusPoints: number) => Promise<void>;
   refreshProfile: () => Promise<void>;
   updateUserProfile: (updates: Partial<UserProfile>) => Promise<void>;
-  quickLoginAsDemoUser: (country?: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -62,15 +61,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Initialize and observe real authenticated session from storage
   useEffect(() => {
-    // 1. Purge any legacy demo user session to guarantee 100% real user accounts
+    // 1. Purge any invalid legacy session to guarantee 100% real user accounts
     try {
       const activeSession = localStorage.getItem('earnworld_active_session');
       if (activeSession) {
         const parsed = JSON.parse(activeSession);
-        if (parsed.uid === 'user_demo_preview' || parsed.email === 'utilizador.teste@earnworld.com') {
+        if (!parsed.uid || parsed.uid === 'user_legacy_preview' || parsed.email === 'utilizador.teste@earnworld.com') {
           localStorage.removeItem('earnworld_active_session');
           localStorage.removeItem('earnworld_user_cache');
-          localStorage.removeItem('earnworld_demo_session');
+          localStorage.removeItem('earnworld_legacy_session');
         }
       }
     } catch (e) {
@@ -83,7 +82,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const activeSession = localStorage.getItem('earnworld_active_session');
         if (activeSession) {
           const { uid, email } = JSON.parse(activeSession);
-          if (uid && uid !== 'user_demo_preview') {
+          if (uid && uid !== 'user_legacy_preview') {
             let profile = await storageService.getUserProfile(uid);
             if (!profile && email) {
               profile = await storageService.findUserByEmail(email);
@@ -134,7 +133,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
       localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: profile.id, email: profile.email }));
     } else {
-      // Provision real profile from authorized Google account data
+      // Provision real profile from authorized Google account data (0 initial fictitious points: points only from completed tasks)
       const uid = data.sub || ('usr_g_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
       const generatedRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
       const newProfile: UserProfile = {
@@ -144,23 +143,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         phoneNumber: '',
         country: 'MZ',
         referralCode: generatedRefCode,
-        pointsBalance: 250,
-        totalEarnedPoints: 250,
+        pointsBalance: 0,
+        totalEarnedPoints: 0,
         totalWithdrawnPoints: 0,
         role: isAdmin ? 'admin' : 'user',
         consecutiveCheckIns: 1,
         createdAt: new Date().toISOString()
       };
       await storageService.saveUserProfile(newProfile);
-      await storageService.addTransaction({
-        userId: uid,
-        type: 'bonus',
-        points: 250,
-        amountUsd: 0.25,
-        description: 'Bónus de Boas-Vindas Google Sign-In',
-        status: 'completed',
-        createdAt: new Date().toISOString()
-      });
       setCurrentUser(newProfile);
       localStorage.setItem('earnworld_user_cache', JSON.stringify(newProfile));
       localStorage.setItem('earnworld_active_session', JSON.stringify({ uid: newProfile.id, email: newProfile.email }));
@@ -179,11 +169,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             scope: 'email profile openid',
             callback: async (tokenResponse: any) => {
               if (tokenResponse?.error) {
-                reject(new Error(tokenResponse.error_description || 'Autorização Google cancelada.'));
+                reject(new Error(tokenResponse.error_description || 'Autorização da conta Google cancelada pelo utilizador.'));
                 return;
               }
               if (!tokenResponse?.access_token) {
-                reject(new Error('Falha ao receber token do Google.'));
+                reject(new Error('Token de autorização Google não recebido.'));
                 return;
               }
 
@@ -193,9 +183,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
                 });
                 if (!res.ok) {
-                  throw new Error(`Google Userinfo error: ${res.status}`);
+                  throw new Error(`Falha ao obter dados da conta Google: HTTP ${res.status}`);
                 }
                 const googleProfile = await res.json();
+                if (!googleProfile.email) {
+                  throw new Error('Conta Google não retornou endereço de email válido.');
+                }
                 await loginWithGoogleData({
                   email: googleProfile.email,
                   name: googleProfile.name,
@@ -225,6 +218,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     .join('')
                 );
                 const payload = JSON.parse(jsonPayload);
+                if (!payload.email) {
+                  throw new Error('Token Google sem email válido.');
+                }
                 await loginWithGoogleData({
                   email: payload.email,
                   name: payload.name,
@@ -239,8 +235,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
           googleObj.accounts.id.prompt();
         } else {
-          // If GIS script is still loading in the iframe
-          reject(new Error('Serviço Google Identity Services a carregar. Por favor, tente novamente em alguns instantes.'));
+          reject(new Error('Google Identity Services ainda não inicializado no navegador. Verifique a conexão com a internet.'));
         }
       } catch (err: any) {
         console.error('Google Sign-In Error:', err);
@@ -327,7 +322,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const uid = 'usr_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
-    const initialPoints = cleanRef ? 250 : 150;
     const isAdmin = ADMIN_EMAILS.includes(cleanEmail) || cleanEmail === 'manuelngovene794@gmail.com';
     const newRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
 
@@ -336,6 +330,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const passwordHash = await computeHash(pass, salt);
     await storageService.saveUserCredentials(cleanEmail, uid, salt, passwordHash);
 
+    // Initial balance: 0 points (points only awarded after completing and validating real tasks)
     const profile: UserProfile = {
       id: uid,
       email: cleanEmail,
@@ -344,8 +339,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       country: country || 'MZ',
       referralCode: newRefCode,
       ...(cleanRef ? { referredBy: cleanRef } : {}),
-      pointsBalance: initialPoints,
-      totalEarnedPoints: initialPoints,
+      pointsBalance: 0,
+      totalEarnedPoints: 0,
       totalWithdrawnPoints: 0,
       role: isAdmin ? 'admin' : 'user',
       consecutiveCheckIns: 0,
@@ -354,24 +349,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     await storageService.saveUserProfile(profile);
 
-    // Welcome bonus transaction
-    await storageService.addTransaction({
-      userId: uid,
-      type: 'bonus',
-      points: initialPoints,
-      amountUsd: initialPoints / 1000,
-      description: cleanRef ? 'Bónus de Boas-Vindas + Convite de Amigo' : 'Bónus de Boas-Vindas EarnWorld',
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    });
-
     setCurrentUser(profile);
     localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
     localStorage.setItem('earnworld_active_session', JSON.stringify({ uid, email: profile.email }));
   };
 
   // Real SMS OTP Dispatch (Supports Mozambique +258 and International E.164)
-  const sendPhoneSms = async (phone: string): Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean; debugCode?: string }> => {
+  const sendPhoneSms = async (phone: string): Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean }> => {
     const raw = phone.trim();
     if (!raw || raw.length < 5) {
       throw new Error('Por favor, introduza um número de telemóvel válido.');
@@ -432,7 +416,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    // 3. New real registration with phone
+    // 3. New real registration with phone (0 initial fictitious points)
     const cleanRef = referralCode && referralCode.trim().length > 0 ? referralCode.trim().toUpperCase() : undefined;
     const uid = 'usr_phone_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
     const newRefCode = 'EW' + Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -445,8 +429,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       country: country || 'MZ',
       referralCode: newRefCode,
       ...(cleanRef ? { referredBy: cleanRef } : {}),
-      pointsBalance: 200,
-      totalEarnedPoints: 200,
+      pointsBalance: 0,
+      totalEarnedPoints: 0,
       totalWithdrawnPoints: 0,
       role: 'user',
       consecutiveCheckIns: 0,
@@ -454,15 +438,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     await storageService.saveUserProfile(profile);
-    await storageService.addTransaction({
-      userId: uid,
-      type: 'bonus',
-      points: 200,
-      amountUsd: 0.20,
-      description: 'Registo por Número de Telemóvel Real Verificado (+258)',
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    });
 
     setCurrentUser(profile);
     localStorage.setItem('earnworld_user_cache', JSON.stringify(profile));
@@ -486,15 +461,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await storageService.saveUserCredentials(cleanEmail, user.id, salt, passwordHash);
   };
 
-  const quickLoginAsDemoUser = async () => {
-    // Route to real Google authentication
-    await loginWithGoogle();
-  };
-
   const logout = async () => {
     setCurrentUser(null);
     localStorage.removeItem('earnworld_active_session');
-    localStorage.removeItem('earnworld_demo_session');
+    localStorage.removeItem('earnworld_legacy_session');
     localStorage.removeItem('earnworld_user_cache');
   };
 
@@ -582,8 +552,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updatePoints,
         claimCheckIn,
         refreshProfile,
-        updateUserProfile,
-        quickLoginAsDemoUser
+        updateUserProfile
       }}
     >
       {children}

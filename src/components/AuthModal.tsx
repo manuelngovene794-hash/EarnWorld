@@ -385,7 +385,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 : mode === 'login'
                 ? 'Entrar na Conta'
                 : mode === 'register'
-                ? 'Criar Conta Gratuita (+150 PTS)'
+                ? 'Criar Conta Gratuita'
                 : 'Redefinir e Atualizar Senha'}
             </button>
 
@@ -528,7 +528,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               disabled={loading || !smsSent || smsCode.length !== 6}
               className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-xs uppercase tracking-wider hover:from-amber-400 hover:to-yellow-300 shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {loading ? 'A validar código SMS...' : 'Verificar Código & Aceder (+200 PTS)'}
+              {loading ? 'A validar código SMS...' : 'Verificar Código & Entrar'}
             </button>
           </form>
         )}

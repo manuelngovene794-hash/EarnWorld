@@ -172,6 +172,19 @@ async function startServer() {
         });
       }
 
+      // Check if real SMS gateway is configured
+      const hasTwilio = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM);
+      const hasAfricasTalking = Boolean(process.env.AFRICASTALKING_USERNAME && process.env.AFRICASTALKING_API_KEY);
+      const hasGatewayUrl = Boolean(process.env.SMS_GATEWAY_URL);
+
+      if (!hasTwilio && !hasAfricasTalking && !hasGatewayUrl) {
+        return res.status(503).json({
+          success: false,
+          configured: false,
+          message: 'Gateway de SMS real não configurado. Para envio de SMS a números de Moçambique (+258) e internacionais, configure as credenciais de envio (Twilio ou Africa\'s Talking) no servidor.'
+        });
+      }
+
       // Rate limit check: prevent sending more than once every 45 seconds
       const existing = phoneOtps.get(cleanPhone);
       const now = Date.now();
@@ -188,12 +201,13 @@ async function startServer() {
       phoneOtps.set(cleanPhone, { code: otpCode, expiresAt, attempts: 0 });
 
       const smsText = `O seu código de verificação EarnWorld é: ${otpCode}. Válido por 5 minutos. Não partilhe este código.`;
-      console.log(`[SMS Gateway Dispatch] Enviando SMS para ${cleanPhone}: "${smsText}"`);
+      console.log(`[SMS Gateway Dispatch] Enviando SMS para ${cleanPhone}`);
 
       let realDelivered = false;
+      let lastGatewayError = '';
 
       // Real Gateway Integration: Twilio
-      if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM) {
+      if (hasTwilio) {
         try {
           const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64');
           const twilioRes = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`, {
@@ -204,46 +218,54 @@ async function startServer() {
             },
             body: new URLSearchParams({
               To: cleanPhone,
-              From: process.env.TWILIO_FROM,
+              From: process.env.TWILIO_FROM || '',
               Body: smsText
             })
           });
           if (twilioRes.ok) {
             realDelivered = true;
+          } else {
+            const twData = await twilioRes.json().catch(() => ({}));
+            lastGatewayError = twData.message || `Twilio HTTP ${twilioRes.status}`;
           }
         } catch (twilioErr: any) {
+          lastGatewayError = twilioErr.message;
           console.warn('[Twilio Error]:', twilioErr.message);
         }
       }
 
       // Real Gateway Integration: Africa's Talking (widely used across Africa and Mozambique)
-      if (!realDelivered && process.env.AFRICASTALKING_USERNAME && process.env.AFRICASTALKING_API_KEY) {
+      if (!realDelivered && hasAfricasTalking) {
         try {
           const atRes = await fetch('https://api.africastalking.com/version1/messaging', {
             method: 'POST',
             headers: {
-              'apiKey': process.env.AFRICASTALKING_API_KEY,
+              'apiKey': process.env.AFRICASTALKING_API_KEY || '',
               'Content-Type': 'application/x-www-form-urlencoded',
               'Accept': 'application/json'
             },
             body: new URLSearchParams({
-              username: process.env.AFRICASTALKING_USERNAME,
+              username: process.env.AFRICASTALKING_USERNAME || '',
               to: cleanPhone,
               message: smsText
             })
           });
           if (atRes.ok) {
             realDelivered = true;
+          } else {
+            const atData = await atRes.json().catch(() => ({}));
+            lastGatewayError = atData.errorMessage || `AfricasTalking HTTP ${atRes.status}`;
           }
         } catch (atErr: any) {
+          lastGatewayError = atErr.message;
           console.warn('[AfricasTalking Error]:', atErr.message);
         }
       }
 
       // Real Gateway Integration: Generic SMS HTTP webhook / API
-      if (!realDelivered && process.env.SMS_GATEWAY_URL) {
+      if (!realDelivered && hasGatewayUrl) {
         try {
-          const gwRes = await fetch(process.env.SMS_GATEWAY_URL, {
+          const gwRes = await fetch(process.env.SMS_GATEWAY_URL || '', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -257,20 +279,28 @@ async function startServer() {
           });
           if (gwRes.ok) {
             realDelivered = true;
+          } else {
+            lastGatewayError = `SMS Gateway HTTP ${gwRes.status}`;
           }
         } catch (gwErr: any) {
+          lastGatewayError = gwErr.message;
           console.warn('[SMS Gateway Webhook Error]:', gwErr.message);
         }
+      }
+
+      if (!realDelivered) {
+        return res.status(502).json({
+          success: false,
+          message: `Falha ao despachar SMS para ${cleanPhone}: ${lastGatewayError || 'Erro no fornecedor de SMS'}.`
+        });
       }
 
       return res.json({
         success: true,
         cleanPhone,
-        message: `Código SMS de 6 dígitos gerado e despachado para ${cleanPhone}.`,
-        delivered: realDelivered,
-        expiresInSeconds: 300,
-        // Included for verification transparency when testing without paid third-party SMS credits
-        debugCode: otpCode
+        message: `Código SMS de 6 dígitos despachado para ${cleanPhone}.`,
+        delivered: true,
+        expiresInSeconds: 300
       });
     } catch (err: any) {
       console.error('[SMS Dispatch Error]:', err);

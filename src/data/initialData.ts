@@ -1,11 +1,11 @@
 import { AppConfig, PaymentMethodConfig, TaskItem } from '../types';
 
 export const DEFAULT_CONFIG: AppConfig = {
-  paymentFundUsd: 100.00,          // Fundo disponível para pagamentos (dinheiro real reservado pelo administrador)
-  availableRealRevenueUsd: 100.00, // Sincronizado com paymentFundUsd
-  estimatedAdRevenueUsd: 0.00,     // Real ad network revenues
-  minWithdrawalPoints: 5000,        // 5000 pts = $5.00
-  pointsPerDollar: 1000,            // 1000 pts = $1.00
+  paymentFundUsd: 0.00,           // Fundo real disponível para pagamentos (reservado pelo administrador ou sincronizado da Monetag)
+  availableRealRevenueUsd: 0.00,  // Receita líquida real disponível
+  estimatedAdRevenueUsd: 0.00,    // Receita de anúncios apurada
+  minWithdrawalPoints: 5000,      // 5000 pts = $5.00
+  pointsPerDollar: 1000,          // 1000 pts = $1.00
   dailyCheckInPoints: 35,
   adRewardPoints: 25,
   referralBonusPoints: 200,
