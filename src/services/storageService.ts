@@ -89,25 +89,135 @@ export const storageService = {
         return u;
       }
     }
+
+    // Fallback: check persistent server backup (for recovery after cache clear / multi-device login)
+    try {
+      const res = await fetch(`/api/user/sync?email=${encodeURIComponent(clean)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.profile) {
+          // Restore to local storage
+          usersMap[data.profile.id] = data.profile;
+          setLocal('earnworld_users_db', usersMap);
+
+          if (data.completedTasks && Array.isArray(data.completedTasks)) {
+            const completedMap = getLocal<Record<string, TaskCompletionRecord[]>>('earnworld_completed_tasks_db', {});
+            completedMap[data.profile.id] = data.completedTasks;
+            setLocal('earnworld_completed_tasks_db', completedMap);
+          }
+
+          if (data.transactions && Array.isArray(data.transactions)) {
+            const txs = getLocal<Transaction[]>('earnworld_transactions_db', []);
+            const userTxIds = new Set(txs.map(t => t.id));
+            for (const t of data.transactions) {
+              if (!userTxIds.has(t.id)) {
+                txs.push(t);
+              }
+            }
+            setLocal('earnworld_transactions_db', txs);
+          }
+
+          return data.profile;
+        }
+      }
+    } catch (_) {
+      // Offline or network error
+    }
+
     return null;
   },
 
   async findUserByPhone(phone: string): Promise<UserProfile | null> {
-    const clean = phone.replace(/[^\d+]/g, '');
+    const cleanDigits = phone.replace(/\D/g, '');
+    if (!cleanDigits || cleanDigits.length < 6) return null;
+
     const users = await this.getAllUsers();
-    return users.find(u => u.phoneNumber && u.phoneNumber.replace(/[^\d+]/g, '') === clean) || null;
+    for (const u of users) {
+      if (!u.phoneNumber) continue;
+      const userDigits = u.phoneNumber.replace(/\D/g, '');
+      if (
+        userDigits === cleanDigits ||
+        (cleanDigits.length >= 8 && userDigits.endsWith(cleanDigits)) ||
+        (userDigits.length >= 8 && cleanDigits.endsWith(userDigits))
+      ) {
+        return u;
+      }
+    }
+
+    // Fallback: check persistent server backup
+    try {
+      const res = await fetch(`/api/user/sync?phone=${encodeURIComponent(cleanDigits)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.profile) {
+          const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
+          usersMap[data.profile.id] = data.profile;
+          setLocal('earnworld_users_db', usersMap);
+
+          if (data.completedTasks && Array.isArray(data.completedTasks)) {
+            const completedMap = getLocal<Record<string, TaskCompletionRecord[]>>('earnworld_completed_tasks_db', {});
+            completedMap[data.profile.id] = data.completedTasks;
+            setLocal('earnworld_completed_tasks_db', completedMap);
+          }
+
+          return data.profile;
+        }
+      }
+    } catch (_) {
+      // Offline or network error
+    }
+
+    return null;
   },
 
   // User Profile
   async getUserProfile(userId: string): Promise<UserProfile | null> {
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
-    return usersMap[userId] || null;
+    if (usersMap[userId]) {
+      return usersMap[userId];
+    }
+
+    // Fallback to server backup
+    try {
+      const res = await fetch(`/api/user/sync?uid=${encodeURIComponent(userId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.profile) {
+          usersMap[data.profile.id] = data.profile;
+          setLocal('earnworld_users_db', usersMap);
+          return data.profile;
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+
+    return null;
   },
 
   async saveUserProfile(profile: UserProfile): Promise<void> {
     const usersMap = getLocal<Record<string, UserProfile>>('earnworld_users_db', {});
     usersMap[profile.id] = profile;
     setLocal('earnworld_users_db', usersMap);
+
+    // Asynchronously synchronize backup with server
+    try {
+      const completedMap = getLocal<Record<string, TaskCompletionRecord[]>>('earnworld_completed_tasks_db', {});
+      const userCompleted = completedMap[profile.id] || [];
+      const txs = getLocal<Transaction[]>('earnworld_transactions_db', []).filter(t => t.userId === profile.id);
+
+      fetch('/api/user/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile,
+          completedTasks: userCompleted,
+          transactions: txs
+        })
+      }).catch(() => {});
+    } catch (_) {
+      // Non-fatal background sync
+    }
   },
 
   async updateUserBalance(userId: string, pointsDelta: number, newTotalEarnedDelta = 0): Promise<void> {

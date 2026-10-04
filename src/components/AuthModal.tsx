@@ -16,6 +16,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { COUNTRIES } from '../data/countries';
+import { storageService } from '../services/storageService';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -41,6 +42,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [country, setCountry] = useState('MZ');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [cleanPhoneFormatted, setCleanPhoneFormatted] = useState('');
+  const [otpToken, setOtpToken] = useState('');
+  const [isExistingUser, setIsExistingUser] = useState(false);
   const [smsCode, setSmsCode] = useState('');
   const [smsSent, setSmsSent] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
@@ -118,22 +121,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
       // If user selected Mozambique (+258) and typed a local 9-digit number
       if (country === 'MZ' && !targetNumber.startsWith('+')) {
-        targetNumber = targetNumber.replace(/[^\d]/g, '');
-        if (targetNumber.startsWith('258')) {
-          targetNumber = '+' + targetNumber;
+        const rawDigits = targetNumber.replace(/[^\d]/g, '');
+        if (rawDigits.startsWith('258')) {
+          targetNumber = '+' + rawDigits;
         } else {
-          targetNumber = '+258' + targetNumber;
+          targetNumber = '+258' + rawDigits;
         }
-      } else if (!targetNumber.startsWith('+') && currentCountryObj?.dialCode) {
-        targetNumber = currentCountryObj.dialCode + targetNumber.replace(/[^\d]/g, '');
+      } else if (!targetNumber.startsWith('+') && currentCountryObj?.dialCode && currentCountryObj.dialCode !== '+') {
+        const localClean = targetNumber.replace(/[^\d]/g, '').replace(/^0+/, '');
+        targetNumber = currentCountryObj.dialCode + localClean;
+      } else if (!targetNumber.startsWith('+')) {
+        targetNumber = '+' + targetNumber.replace(/[^\d]/g, '');
+      }
+
+      // Check if user account already exists in persistent storage
+      const existing = await storageService.findUserByPhone(targetNumber);
+      setIsExistingUser(Boolean(existing));
+      if (existing && existing.displayName) {
+        setName(existing.displayName);
       }
 
       const res = await sendPhoneSms(targetNumber);
       setSmsSent(true);
+      setOtpToken(res.otpToken || '');
       setCleanPhoneFormatted(res.cleanPhone || targetNumber);
       setResendCooldown(45);
       setSuccessMsg(res.message || `Código de verificação SMS de 6 dígitos enviado para ${res.cleanPhone || targetNumber}.`);
     } catch (err: any) {
+      setSmsSent(false);
       setErrorMsg(err.message || 'Erro ao despachar SMS. Verifique o número digitado.');
     } finally {
       setIsSendingSms(false);
@@ -157,7 +172,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
     try {
       const targetPhone = cleanPhoneFormatted || phoneNumber.trim();
-      await registerWithPhone(targetPhone, name, country, smsCode.trim(), referralCode);
+      await registerWithPhone(targetPhone, name, country, smsCode.trim(), referralCode, otpToken);
       onClose();
     } catch (err: any) {
       setErrorMsg(err.message || 'Código SMS incorreto ou expirado. Verifique e tente novamente.');
@@ -402,12 +417,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         ) : (
           /* Phone / Real SMS Form */
           <form onSubmit={handlePhoneAuth} className="space-y-3.5">
+            {/* Step 1: Phone input (Locked if SMS is already sent, with button to change number) */}
             <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-400">País / Indicativo</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-400">País / Indicativo</label>
+                {smsSent && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSmsSent(false);
+                      setSmsCode('');
+                      setErrorMsg('');
+                      setSuccessMsg('');
+                    }}
+                    className="text-[11px] text-amber-400 hover:text-amber-300 underline font-medium"
+                  >
+                    Alterar telemóvel
+                  </button>
+                )}
+              </div>
               <select
+                disabled={smsSent}
                 value={country}
                 onChange={(e) => setCountry(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-amber-400 focus:outline-none"
+                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-amber-400 focus:outline-none disabled:opacity-60"
               >
                 {COUNTRIES.map((c) => (
                   <option key={c.code} value={c.code}>
@@ -426,89 +459,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 <input
                   type="tel"
                   required
+                  disabled={smsSent}
                   placeholder={country === 'MZ' ? '84 123 4567 ou +258 84 123 4567' : 'Número de telemóvel'}
                   value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-amber-400 focus:outline-none font-mono"
+                  onChange={(e) => {
+                    setPhoneNumber(e.target.value);
+                    if (smsSent) {
+                      setSmsSent(false);
+                      setSmsCode('');
+                    }
+                  }}
+                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-amber-400 focus:outline-none font-mono disabled:opacity-60"
                 />
               </div>
             </div>
 
-            {/* SMS Dispatch Trigger */}
-            <div className="pt-1">
-              <button
-                type="button"
-                onClick={handleSendRealSms}
-                disabled={isSendingSms || resendCooldown > 0}
-                className={`w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-                  resendCooldown > 0
-                    ? 'bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed'
-                    : 'bg-slate-800 hover:bg-slate-750 text-amber-300 border border-amber-500/30'
-                }`}
-              >
-                {isSendingSms ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>A despachar SMS...</span>
-                  </>
-                ) : resendCooldown > 0 ? (
-                  <span>Reenviar SMS em {resendCooldown}s</span>
-                ) : smsSent ? (
-                  <span>Reenviar Novo Código SMS</span>
-                ) : (
-                  <span>Enviar Código de Verificação por SMS</span>
-                )}
-              </button>
-            </div>
-
-            {/* OTP Code Entry (Real 6-digit code sent to phone) */}
-            {smsSent && (
-              <div className="space-y-2 p-3.5 rounded-xl bg-slate-950 border border-amber-500/40 animate-in fade-in">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-300 font-semibold">Código de Verificação SMS:</span>
-                  <span className="text-amber-400 text-[11px] font-medium">Validade: 5 min</span>
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  Insira o código de 6 dígitos enviado por SMS para o seu telemóvel:
-                </p>
-                <input
-                  type="text"
-                  required
-                  maxLength={6}
-                  placeholder="Ex: 839201"
-                  value={smsCode}
-                  onChange={(e) => setSmsCode(e.target.value.replace(/[^\d]/g, ''))}
-                  className="w-full px-3 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-amber-300 text-center font-mono font-black text-lg tracking-widest focus:border-amber-400 focus:outline-none"
-                />
-              </div>
-            )}
-
-            {smsSent && (
-              <>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-400">O Seu Nome Completo</label>
-                  <input
-                    type="text"
-                    placeholder="O seu nome completo"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-amber-400 focus:outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-400">Código de Convite (Opcional)</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: EW12345"
-                    value={referralCode}
-                    onChange={(e) => setReferralCode(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-amber-400 focus:outline-none uppercase font-mono"
-                  />
-                </div>
-              </>
-            )}
-
+            {/* Error or Notice Display */}
             {errorMsg && (
               <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-semibold flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -523,13 +489,130 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={loading || !smsSent || smsCode.length !== 6}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-xs uppercase tracking-wider hover:from-amber-400 hover:to-yellow-300 shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {loading ? 'A validar código SMS...' : 'Verificar Código & Entrar'}
-            </button>
+            {/* BEFORE SMS IS SENT: Show ONLY the Send SMS button */}
+            {!smsSent ? (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleSendRealSms}
+                  disabled={isSendingSms || !phoneNumber.trim()}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-xs uppercase tracking-wider hover:from-amber-400 hover:to-yellow-300 shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSendingSms ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>A despachar SMS para o número...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Phone className="w-4 h-4" />
+                      <span>Enviar Código de Verificação por SMS</span>
+                    </>
+                  )}
+                </button>
+                <p className="text-[11px] text-slate-500 text-center mt-2">
+                  Um código real de 6 dígitos será enviado por SMS para o seu número.
+                </p>
+              </div>
+            ) : (
+              /* AFTER SMS CONFIRMED: Show OTP entry and "Validar Código" button */
+              <div className="space-y-3.5 pt-1 animate-in fade-in">
+                {/* Account Status Notice */}
+                {isExistingUser ? (
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-2 text-xs text-emerald-300">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                    <span>Conta encontrada! Valide o código SMS para iniciar sessão e recuperar os seus pontos, saldo e tarefas.</span>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-2 text-xs text-amber-300">
+                    <Sparkles className="w-4 h-4 shrink-0 text-amber-400" />
+                    <span>Novo cadastro! Confirme o seu nome e insira o código SMS para ativar a sua conta.</span>
+                  </div>
+                )}
+
+                {/* OTP Code Entry (Real 6-digit code sent to phone) */}
+                <div className="space-y-2 p-3.5 rounded-xl bg-slate-950 border border-amber-500/40">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300 font-semibold">Código de Verificação SMS:</span>
+                    <span className="text-amber-400 text-[11px] font-medium">Validade: 5 min</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Insira o código de 6 dígitos recebido por SMS no seu telemóvel ({cleanPhoneFormatted}):
+                  </p>
+                  <input
+                    type="text"
+                    required
+                    maxLength={6}
+                    autoFocus
+                    placeholder="Ex: 839201"
+                    value={smsCode}
+                    onChange={(e) => setSmsCode(e.target.value.replace(/[^\d]/g, ''))}
+                    className="w-full px-3 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-amber-300 text-center font-mono font-black text-xl tracking-widest focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-400">O Seu Nome Completo</label>
+                  <input
+                    type="text"
+                    placeholder="O seu nome completo"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+
+                {!isExistingUser && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-400">Código de Convite (Opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: EW12345"
+                      value={referralCode}
+                      onChange={(e) => setReferralCode(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-amber-400 focus:outline-none uppercase font-mono"
+                    />
+                  </div>
+                )}
+
+                {/* REAL VALIDATE CODE BUTTON: only visible after confirmed SMS delivery */}
+                <button
+                  type="submit"
+                  disabled={loading || smsCode.length !== 6}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 hover:to-emerald-300 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {loading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>A validar código SMS...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>{isExistingUser ? 'Validar Código & Iniciar Sessão' : 'Validar Código & Ativar Conta'}</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Resend SMS with cooldown */}
+                <div className="text-center pt-1">
+                  <button
+                    type="button"
+                    onClick={handleSendRealSms}
+                    disabled={isSendingSms || resendCooldown > 0}
+                    className="text-xs text-slate-400 hover:text-amber-300 disabled:opacity-50 transition-colors"
+                  >
+                    {isSendingSms ? (
+                      'A reenviar SMS...'
+                    ) : resendCooldown > 0 ? (
+                      `Reenviar SMS em ${resendCooldown}s`
+                    ) : (
+                      'Não recebeu o código? Reenviar SMS'
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </form>
         )}
 

@@ -2,6 +2,8 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { sendRealSmsOtp, verifyRealSmsOtp } from './src/server/smsCore.js';
+import { saveUserBackup, findUserBackup } from './src/server/userStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -136,175 +138,58 @@ async function startServer() {
     }
   });
 
-  // In-memory OTP storage for phone verification: phone -> { code, expiresAt, attempts }
-  const phoneOtps = new Map<string, { code: string; expiresAt: number; attempts: number }>();
+  // Persistent User Data Synchronization Endpoint (Guarantees data recovery across logouts & devices)
+  app.get('/api/user/sync', (req, res) => {
+    try {
+      const uid = typeof req.query.uid === 'string' ? req.query.uid : undefined;
+      const email = typeof req.query.email === 'string' ? req.query.email : undefined;
+      const phone = typeof req.query.phone === 'string' ? req.query.phone : undefined;
+
+      const record = findUserBackup({ uid, email, phone });
+      if (!record) {
+        return res.status(404).json({ success: false, message: 'Conta não encontrada no backup.' });
+      }
+
+      return res.json({
+        success: true,
+        profile: record.profile,
+        completedTasks: record.completedTasks || [],
+        transactions: record.transactions || []
+      });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  app.post('/api/user/sync', (req, res) => {
+    try {
+      const { profile, completedTasks, transactions } = req.body || {};
+      if (!profile || !profile.id) {
+        return res.status(400).json({ success: false, message: 'Perfil inválido.' });
+      }
+
+      saveUserBackup(profile, completedTasks, transactions);
+      return res.json({ success: true, message: 'Dados da conta persistidos com sucesso.' });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, message: e.message });
+    }
+  });
 
   // Real SMS OTP Send Endpoint (Supporting Mozambique +258 and international E.164 numbers)
   app.post('/api/auth/send-sms', async (req, res) => {
     try {
       const rawPhone = String(req.body?.phoneNumber || '').trim();
-      if (!rawPhone) {
-        return res.status(400).json({ success: false, message: 'Número de telefone é obrigatório.' });
+      const result = await sendRealSmsOtp(rawPhone);
+
+      if (!result.success) {
+        const statusCode = !result.configured ? 503 : 400;
+        return res.status(statusCode).json(result);
       }
 
-      // Format & clean phone number
-      let cleanPhone = rawPhone.replace(/[^\d+]/g, '');
-      // If user typed Mozambique local 9-digit number without country code (e.g. 84xxxxxxx)
-      if (/^8[2-7]\d{7}$/.test(cleanPhone)) {
-        cleanPhone = '+258' + cleanPhone;
-      } else if (!cleanPhone.startsWith('+')) {
-        cleanPhone = '+' + cleanPhone;
-      }
-
-      // Validate Mozambique numbers or general international numbers
-      if (cleanPhone.startsWith('+258')) {
-        const localPart = cleanPhone.slice(4);
-        if (!/^[8][2-7]\d{7}$/.test(localPart)) {
-          return res.status(400).json({
-            success: false,
-            message: 'Número de Moçambique inválido. Formato esperado: +258 84/85/86/87 seguido de 7 dígitos.'
-          });
-        }
-      } else if (cleanPhone.length < 8 || cleanPhone.length > 16) {
-        return res.status(400).json({
-          success: false,
-          message: 'Número de telefone internacional inválido. Inclua o indicativo do país (Ex: +258...).'
-        });
-      }
-
-      // Check if real SMS gateway is configured
-      const hasTwilio = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM);
-      const hasAfricasTalking = Boolean(process.env.AFRICASTALKING_USERNAME && process.env.AFRICASTALKING_API_KEY);
-      const hasGatewayUrl = Boolean(process.env.SMS_GATEWAY_URL);
-
-      if (!hasTwilio && !hasAfricasTalking && !hasGatewayUrl) {
-        return res.status(503).json({
-          success: false,
-          configured: false,
-          message: 'Gateway de SMS real não configurado. Para envio de SMS a números de Moçambique (+258) e internacionais, configure as credenciais de envio (Twilio ou Africa\'s Talking) no servidor.'
-        });
-      }
-
-      // Rate limit check: prevent sending more than once every 45 seconds
-      const existing = phoneOtps.get(cleanPhone);
-      const now = Date.now();
-      if (existing && existing.expiresAt - now > 4 * 60 * 1000 + 15 * 1000) {
-        return res.status(429).json({
-          success: false,
-          message: 'Aguarde 45 segundos antes de solicitar um novo código SMS.'
-        });
-      }
-
-      // Cryptographically secure 6-digit random OTP
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = now + 5 * 60 * 1000; // 5 minutes validity
-      phoneOtps.set(cleanPhone, { code: otpCode, expiresAt, attempts: 0 });
-
-      const smsText = `O seu código de verificação EarnWorld é: ${otpCode}. Válido por 5 minutos. Não partilhe este código.`;
-      console.log(`[SMS Gateway Dispatch] Enviando SMS para ${cleanPhone}`);
-
-      let realDelivered = false;
-      let lastGatewayError = '';
-
-      // Real Gateway Integration: Twilio
-      if (hasTwilio) {
-        try {
-          const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64');
-          const twilioRes = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`, {
-            method: 'POST',
-            headers: {
-              'Authorization': authHeader,
-              'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: new URLSearchParams({
-              To: cleanPhone,
-              From: process.env.TWILIO_FROM || '',
-              Body: smsText
-            })
-          });
-          if (twilioRes.ok) {
-            realDelivered = true;
-          } else {
-            const twData = await twilioRes.json().catch(() => ({}));
-            lastGatewayError = twData.message || `Twilio HTTP ${twilioRes.status}`;
-          }
-        } catch (twilioErr: any) {
-          lastGatewayError = twilioErr.message;
-          console.warn('[Twilio Error]:', twilioErr.message);
-        }
-      }
-
-      // Real Gateway Integration: Africa's Talking (widely used across Africa and Mozambique)
-      if (!realDelivered && hasAfricasTalking) {
-        try {
-          const atRes = await fetch('https://api.africastalking.com/version1/messaging', {
-            method: 'POST',
-            headers: {
-              'apiKey': process.env.AFRICASTALKING_API_KEY || '',
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'Accept': 'application/json'
-            },
-            body: new URLSearchParams({
-              username: process.env.AFRICASTALKING_USERNAME || '',
-              to: cleanPhone,
-              message: smsText
-            })
-          });
-          if (atRes.ok) {
-            realDelivered = true;
-          } else {
-            const atData = await atRes.json().catch(() => ({}));
-            lastGatewayError = atData.errorMessage || `AfricasTalking HTTP ${atRes.status}`;
-          }
-        } catch (atErr: any) {
-          lastGatewayError = atErr.message;
-          console.warn('[AfricasTalking Error]:', atErr.message);
-        }
-      }
-
-      // Real Gateway Integration: Generic SMS HTTP webhook / API
-      if (!realDelivered && hasGatewayUrl) {
-        try {
-          const gwRes = await fetch(process.env.SMS_GATEWAY_URL || '', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(process.env.SMS_GATEWAY_API_KEY ? { 'Authorization': `Bearer ${process.env.SMS_GATEWAY_API_KEY}` } : {})
-            },
-            body: JSON.stringify({
-              phone: cleanPhone,
-              message: smsText,
-              code: otpCode
-            })
-          });
-          if (gwRes.ok) {
-            realDelivered = true;
-          } else {
-            lastGatewayError = `SMS Gateway HTTP ${gwRes.status}`;
-          }
-        } catch (gwErr: any) {
-          lastGatewayError = gwErr.message;
-          console.warn('[SMS Gateway Webhook Error]:', gwErr.message);
-        }
-      }
-
-      if (!realDelivered) {
-        return res.status(502).json({
-          success: false,
-          message: `Falha ao despachar SMS para ${cleanPhone}: ${lastGatewayError || 'Erro no fornecedor de SMS'}.`
-        });
-      }
-
-      return res.json({
-        success: true,
-        cleanPhone,
-        message: `Código SMS de 6 dígitos despachado para ${cleanPhone}.`,
-        delivered: true,
-        expiresInSeconds: 300
-      });
+      return res.status(200).json(result);
     } catch (err: any) {
       console.error('[SMS Dispatch Error]:', err);
-      return res.status(500).json({ success: false, message: 'Erro ao despachar SMS.' });
+      return res.status(500).json({ success: false, message: 'Erro interno ao despachar SMS.' });
     }
   });
 
@@ -313,60 +198,15 @@ async function startServer() {
     try {
       const rawPhone = String(req.body?.phoneNumber || '').trim();
       const code = String(req.body?.code || '').trim();
+      const otpToken = String(req.body?.otpToken || '').trim();
 
-      if (!rawPhone || !code) {
-        return res.status(400).json({ success: false, message: 'Número de telefone e código SMS são obrigatórios.' });
+      const result = verifyRealSmsOtp(rawPhone, code, otpToken);
+
+      if (!result.success) {
+        return res.status(400).json(result);
       }
 
-      let cleanPhone = rawPhone.replace(/[^\d+]/g, '');
-      if (/^8[2-7]\d{7}$/.test(cleanPhone)) {
-        cleanPhone = '+258' + cleanPhone;
-      } else if (!cleanPhone.startsWith('+')) {
-        cleanPhone = '+' + cleanPhone;
-      }
-
-      const stored = phoneOtps.get(cleanPhone);
-      if (!stored) {
-        return res.status(400).json({
-          success: false,
-          message: 'Nenhum código ativo encontrado para este número. Solicite um novo código SMS.'
-        });
-      }
-
-      const now = Date.now();
-      if (now > stored.expiresAt) {
-        phoneOtps.delete(cleanPhone);
-        return res.status(400).json({
-          success: false,
-          message: 'O código SMS expirou (validade de 5 minutos). Solicite um novo código.'
-        });
-      }
-
-      if (stored.attempts >= 5) {
-        phoneOtps.delete(cleanPhone);
-        return res.status(400).json({
-          success: false,
-          message: 'Número excessivo de tentativas incorretas. Solicite um novo código.'
-        });
-      }
-
-      if (stored.code !== code) {
-        stored.attempts += 1;
-        return res.status(400).json({
-          success: false,
-          message: `Código SMS incorreto. Restam ${5 - stored.attempts} tentativa(s).`
-        });
-      }
-
-      // Validated successfully! Remove one-time code to prevent reuse
-      phoneOtps.delete(cleanPhone);
-
-      return res.json({
-        success: true,
-        verified: true,
-        phoneNumber: cleanPhone,
-        message: 'Número de telemóvel verificado com sucesso.'
-      });
+      return res.status(200).json(result);
     } catch (err: any) {
       return res.status(500).json({ success: false, message: 'Erro ao verificar código SMS.' });
     }

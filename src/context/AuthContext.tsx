@@ -37,13 +37,14 @@ interface AuthContextType {
     phone?: string,
     referralCode?: string
   ) => Promise<void>;
-  sendPhoneSms: (phone: string) => Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean }>;
+  sendPhoneSms: (phone: string) => Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean; otpToken?: string }>;
   registerWithPhone: (
     phone: string,
     name: string,
     country: string,
     verificationCode: string,
-    referralCode?: string
+    referralCode?: string,
+    otpToken?: string
   ) => Promise<void>;
   resetPassword: (email: string, newPass: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -355,21 +356,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Real SMS OTP Dispatch (Supports Mozambique +258 and International E.164)
-  const sendPhoneSms = async (phone: string): Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean }> => {
+  const sendPhoneSms = async (phone: string): Promise<{ success: boolean; cleanPhone: string; message: string; delivered?: boolean; otpToken?: string }> => {
     const raw = phone.trim();
     if (!raw || raw.length < 5) {
       throw new Error('Por favor, introduza um número de telemóvel válido.');
     }
 
-    const response = await fetch('/api/auth/send-sms', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phoneNumber: raw })
-    });
+    let response: Response;
+    try {
+      response = await fetch('/api/auth/send-sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: raw })
+      });
+    } catch (networkErr: any) {
+      throw new Error(`Falha de conexão com o servidor: ${networkErr.message || 'Erro de rede'}. Verifique a sua ligação.`);
+    }
 
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      throw new Error(data.message || 'Erro ao enviar SMS de verificação.');
+    // Defensive response handling: avoid "Unexpected end of JSON input" on HTML or empty response
+    const rawText = await response.text();
+    let data: any = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch (_) {
+      console.warn('Resposta não-JSON ao despachar SMS:', rawText?.slice(0, 150));
+    }
+
+    if (!response.ok || !data || !data.success) {
+      if (data && data.message) {
+        throw new Error(data.message);
+      }
+      if (response.status === 503) {
+        throw new Error('Gateway de SMS real não configurado no servidor. Configure as variáveis de ambiente (Twilio, Africa\'s Talking ou Infobip) no Vercel.');
+      }
+      if (response.status === 404) {
+        throw new Error('Endpoint de SMS não encontrado no servidor (/api/auth/send-sms). Verifique as configurações de rotas no Vercel.');
+      }
+      if (response.status >= 500) {
+        throw new Error(`Erro no servidor ao despachar SMS (${response.status}). Verifique as credenciais no Vercel.`);
+      }
+      throw new Error(`Erro ao enviar SMS de verificação (Código HTTP ${response.status}).`);
     }
 
     return data;
@@ -381,7 +407,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     name: string,
     country: string,
     verificationCode: string,
-    referralCode?: string
+    referralCode?: string,
+    otpToken?: string
   ) => {
     const cleanCode = verificationCode.trim();
     if (!cleanCode || cleanCode.length !== 6) {
@@ -389,15 +416,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 1. Verify real OTP with server
-    const verifyRes = await fetch('/api/auth/verify-sms', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phoneNumber: phone, code: cleanCode })
-    });
+    let verifyRes: Response;
+    try {
+      verifyRes = await fetch('/api/auth/verify-sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: phone, code: cleanCode, otpToken })
+      });
+    } catch (networkErr: any) {
+      throw new Error(`Falha de conexão ao validar SMS: ${networkErr.message || 'Erro de rede'}.`);
+    }
 
-    const verifyData = await verifyRes.json();
-    if (!verifyRes.ok || !verifyData.success) {
-      throw new Error(verifyData.message || 'Código SMS inválido ou expirado.');
+    const rawText = await verifyRes.text();
+    let verifyData: any = null;
+    try {
+      verifyData = rawText ? JSON.parse(rawText) : null;
+    } catch (_) {
+      console.warn('Resposta não-JSON ao validar SMS:', rawText?.slice(0, 150));
+    }
+
+    if (!verifyRes.ok || !verifyData || !verifyData.success) {
+      if (verifyData && verifyData.message) {
+        throw new Error(verifyData.message);
+      }
+      if (verifyRes.status === 404) {
+        throw new Error('Endpoint de validação não encontrado (/api/auth/verify-sms).');
+      }
+      throw new Error(`Código SMS inválido ou erro no servidor (${verifyRes.status}).`);
     }
 
     const cleanPhone = verifyData.phoneNumber || phone.replace(/[^\d+]/g, '');
